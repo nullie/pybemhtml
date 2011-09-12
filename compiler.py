@@ -8,9 +8,19 @@ from pyjsparser.parser import Parser
 
 
 PREAMBLE = """
-def foo():
-    pass
+from compiler import _pybemhtml_Function
 """
+
+
+class _pybemhtml_Function(object):
+    def __init__(self, function):
+        self.function = function
+
+    def __call__(self, *args):
+        return self.function(None, args)
+
+    def apply(self, this=None, args=[]):
+        return self.function(this, args)
 
 
 class Stream(object):
@@ -22,8 +32,8 @@ class Stream(object):
     def indent(self):
         self._indent += 1
 
-    def dedent(self):
-        self._indent -= 1
+    def dedent(self, n=1):
+        self._indent -= n
 
         if self._indent < 0:
             raise Exception("Unexpected dedent")
@@ -41,10 +51,10 @@ class Compiler(object):
         self.code = Stream()
         self.name_counter = 0
 
-        assert isinstance(program, ast.Program)
-
         for line in PREAMBLE.strip().split('\n'):
             self.code.writeline(line)
+
+        assert isinstance(program, ast.Program)
 
         self.compile_statements(program.statements)
 
@@ -66,11 +76,15 @@ class Compiler(object):
         if isinstance(expr, ast.FuncDecl):
             name = self.generate_name()
             
-            self.code.writeline('def %s(%s):' % (name, ','.join(map(self.compile_expression, expr.parameters or []))))
+            self.code.writeline('def %s(this, arguments):' % (name))
             self.code.indent()
+
+            for i, parameter in enumerate(expr.parameters or []):
+                self.code.writeline('%s = arguments[%d]' % (self.compile_expression(parameter), i))
+            
             self.compile_statements(expr.statements)
             self.code.dedent()
-            return name
+            return "_pybemhtml_Function(%s)" % name
 
         if isinstance(expr, ast.UnaryOp):
             operator = expr.operator
