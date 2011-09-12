@@ -37,8 +37,23 @@ class Compiler(object):
     def __init__(self):
         pass
 
+    def compile(self, program):
+        self.code = Stream()
+        self.name_counter = 0
+
+        assert isinstance(program, ast.Program)
+
+        for line in PREAMBLE.strip().split('\n'):
+            self.code.writeline(line)
+
+        self.compile_statements(program.statements)
+
+        return self.code
+
     def generate_name(self):
-        return 'foo'
+        name = '_pybemhtml_%s' % self.name_counter
+        self.name_counter += 1
+        return name
 
     def optimize_expression(self, expr):
         pass
@@ -58,10 +73,26 @@ class Compiler(object):
             return name
 
         if isinstance(expr, ast.UnaryOp):
-            return "%s%s" % (expr.operator, self.compile_expression(expr.value))
+            operator = expr.operator
+
+            if operator == '!':
+                operator = 'not'
+
+            return "%s (%s)" % (operator, self.compile_expression(expr.value))
 
         if isinstance(expr, ast.BinOp):
-            return "(%s %s %s)" % (self.compile_expression(expr.left), expr.operator, self.compile_expression(expr.right))
+            operator = expr.operator
+
+            if operator == '===':
+                operator = '=='
+            
+            if operator == '&&':
+                operator = 'and'
+
+            if operator == '||':
+                operator = 'or'
+
+            return "(%s %s %s)" % (self.compile_expression(expr.left), operator, self.compile_expression(expr.right))
 
         if isinstance(expr, ast.Assign):
             return "(%s %s %s)" % (self.compile_expression(expr.node), expr.operator, self.compile_expression(expr.expr))
@@ -147,18 +178,6 @@ class Compiler(object):
                 letters.append(letter)
 
         return ''.join(letters)
-
-    def compile(self, program):
-        self.code = Stream()
-
-        assert isinstance(program, ast.Program)
-
-        for line in PREAMBLE.strip().split('\n'):
-            self.code.writeline(line)
-
-        self.compile_statements(program.statements)
-
-        return self.code
 
     def compile_statements(self, statements):
         for statement in statements:
