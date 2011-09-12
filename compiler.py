@@ -85,6 +85,9 @@ class Compiler(object):
 
             if operator == '===':
                 operator = '=='
+
+            if operator == '!==':
+                operator = '!='
             
             if operator == '&&':
                 operator = 'and'
@@ -95,7 +98,7 @@ class Compiler(object):
             return "(%s %s %s)" % (self.compile_expression(expr.left), operator, self.compile_expression(expr.right))
 
         if isinstance(expr, ast.Assign):
-            return "(%s %s %s)" % (self.compile_expression(expr.node), expr.operator, self.compile_expression(expr.expr))
+            return "assign(%s,%s)" % (self.compile_expression(expr.node), self.compile_expression(expr.expr))
 
         if isinstance(expr, ast.FuncCall):
             return "%s(%s)" % (self.compile_expression(expr.node), ",".join(map(self.compile_expression, expr.arguments or [])))
@@ -120,16 +123,14 @@ class Compiler(object):
             return '(%s if %s else %s)' % (self.compile_expression(expr.true), self.compile_expression(expr.expr), self.compile_expression(expr.false))
 
         if isinstance(expr, ast.ForIn):
-            name = self.generate_name
-
-            self.code.writeline('for %s in %s:' % (expr.item, self.compile_expression(expr.iterator)))
+            assert isinstance(expr.item, ast.Identifier)
+            self.code.writeline('for %s in %s:' % (expr.item.name, self.compile_expression(expr.iterator)))
             self.code.indent()
             self.compile_statements(expr.statement)
             self.code.dedent()
             return ''
 
         if isinstance(expr, ast.While):
-            name = self.generate_name
             self.code.writeline('while %s:' % self.compile_expression(expr.condition))
             self.code.indent()
             self.compile_statements(expr.statement)
@@ -142,8 +143,12 @@ class Compiler(object):
         if isinstance(expr, ast.Number):
             return expr.value
 
-        if isinstance(expr, ast.PropertyAccessor):
+        if isinstance(expr, ast.BracketAccessor):
             return '%s[%s]' % (self.compile_expression(expr.node), self.compile_expression(expr.element))
+
+        if isinstance(expr, ast.DotAccessor):
+            assert isinstance(expr.element, ast.Identifier)
+            return '%s[%r]' % (self.compile_expression(expr.node), expr.element.name)
 
         if isinstance(expr, ast.String):
             return repr(expr.data[1:-1])
