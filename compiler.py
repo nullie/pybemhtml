@@ -7,6 +7,12 @@ from pyjsparser import ast
 from pyjsparser.parser import Parser
 
 
+PREAMBLE = """
+def foo():
+    pass
+"""
+
+
 class Stream(object):
     def __init__(self):
         self._indent = 0
@@ -27,105 +33,179 @@ class Stream(object):
         self.lineno += 1
 
 
-def optimize_expression(expr):
-    pass
+class Compiler(object):
+    def __init__(self):
+        pass
 
+    def generate_name(self):
+        return 'foo'
 
-def compile_expression(expr):
-    if isinstance(expr, list):
-        assert len(expr) == 1
-        expr = expr[0]
+    def optimize_expression(self, expr):
+        pass
 
-    if isinstance(expr, ast.UnaryOp):
-        return "%s %s" % (expr.operator, compile_expression(expr.value))
+    def compile_expression(self, expr):
+        if isinstance(expr, list):
+            assert len(expr) == 1
+            return self.compile_expression(expr[0])
 
-    if isinstance(expr, ast.BinOp):
-        return "(%s %s %s)" % (compile_expression(expr.left), expr.operator, compile_expression(expr.right))
-
-    if isinstance(expr, ast.FuncCall):
-        return "%s(%s)" % (compile_expression(expr.node), ",".join(map(compile_expression, expr.arguments)))
-
-    if isinstance(expr, ast.Boolean):
-        if expr.value == 'true':
-            return 'True'
-        elif expr.value == 'false':
-            return 'False'
-        else:
-            assert False
-
-    if isinstance(expr, ast.PropertyAccessor):
-        return '%s[%s]' % (compile_expression(expr.node), compile_expression(expr.element))
-
-    if isinstance(expr, ast.String):
-        return repr(expr.data[1:-1])
-
-    if isinstance(expr, ast.Identifier):
-        return repr(expr.name)
-
-    if isinstance(expr, str):
-        if expr == 'this':
-            return 'this'
-
-    return repr(expr)
-
-LETTER_OR_DIGIT = re.compile('[a-zA-Z0-9]')
-LETTER = re.compile('[a-zA-Z]')
-
-def escape_identifier(name):
-    letters = []
-
-    if not LETTER.match(name[0]):
-        letters.append('_')
-        
-    for letter in name:
-        if not LETTER_OR_DIGIT.match(letter):
-            letters.append('_%x' % ord(letter))
-        else:
-            letters.append(letter)
-
-    return ''.join(letters)
-
-
-def compile(program):
-    assert isinstance(program, ast.Program)
-
-    stream = Stream()
-
-    for statement in program.statements:
-        if isinstance(statement, list):
-            assert len(statement) == 1
-            statement = statement[0]
-
-        if isinstance(statement, ast.VariableDeclaration):
-            assert isinstance(statement.node, ast.Identifier)
-
-            stream.writeline('%s = %s' % (escape_identifier(statement.node.name), compile_expression(statement.expr)))
-            continue
-
-        if isinstance(statement, ast.If):
-            assert len(statement.expr) == 1
-            expression = compile_expression(statement.expr[0])
-
-            stream.writeline('if %s:' % expression)
-
-            stream.writeline(repr(statement.true))
-            stream.writeline(repr(statement.false))
-
-            stream.indent()
-            stream.writeline('pass')
-            stream.dedent()
-            continue
-
-        raise Exception("Unexpected statement %r" % statement)
+        if isinstance(expr, ast.FuncDecl):
+            name = self.generate_name()
             
-    return stream
+            self.code.writeline('def %s(%s):' % (name, ','.join(map(self.compile_expression, expr.parameters or []))))
+            self.code.indent()
+            self.compile_statements(expr.statements)
+            self.code.dedent()
+            return name
+
+        if isinstance(expr, ast.UnaryOp):
+            return "%s%s" % (expr.operator, self.compile_expression(expr.value))
+
+        if isinstance(expr, ast.BinOp):
+            return "(%s %s %s)" % (self.compile_expression(expr.left), expr.operator, self.compile_expression(expr.right))
+
+        if isinstance(expr, ast.Assign):
+            return "(%s %s %s)" % (self.compile_expression(expr.node), expr.operator, self.compile_expression(expr.expr))
+
+        if isinstance(expr, ast.FuncCall):
+            return "%s(%s)" % (self.compile_expression(expr.node), ",".join(map(self.compile_expression, expr.arguments or [])))
+
+        if isinstance(expr, ast.Object):
+            properties = []
+            for assignment in expr.properties:
+                assert isinstance(assignment, ast.Assign) and assignment.operator == ':'
+                properties.append("%s: %s" % (self.compile_expression(assignment.node), self.compile_expression(assignment.expr)))
+                
+            return "{%s}" % ",".join(properties)
+
+        if isinstance(expr, ast.Boolean):
+            if expr.value == 'true':
+                return 'True'
+            elif expr.value == 'false':
+                return 'False'
+            else:
+                assert False
+
+        if isinstance(expr, ast.If):
+            return '(%s if %s else %s)' % (self.compile_expression(expr.true), self.compile_expression(expr.expr), self.compile_expression(expr.false))
+
+        if isinstance(expr, ast.ForIn):
+            name = self.generate_name
+
+            self.code.writeline('for %s in %s:' % (expr.item, self.compile_expression(expr.iterator)))
+            self.code.indent()
+            self.compile_statements(expr.statement)
+            self.code.dedent()
+            return ''
+
+        if isinstance(expr, ast.While):
+            name = self.generate_name
+            self.code.writeline('while %s:' % self.compile_expression(expr.condition))
+            self.code.indent()
+            self.compile_statements(expr.statement)
+            self.code.dedent()
+            return ''
+
+        if isinstance(expr, ast.While):
+            pass
+
+        if isinstance(expr, ast.Number):
+            return expr.value
+
+        if isinstance(expr, ast.PropertyAccessor):
+            return '%s[%s]' % (self.compile_expression(expr.node), self.compile_expression(expr.element))
+
+        if isinstance(expr, ast.String):
+            return repr(expr.data[1:-1])
+
+        if isinstance(expr, ast.Identifier):
+            return expr.name
+
+        if isinstance(expr, ast.Array):
+            return "[%s]" % ','.join(map(self.compile_expression, expr.items or []))
+
+        if isinstance(expr, str):
+            return expr
+
+        if expr is None:
+            return ''
+
+        raise Exception("Unexpected node %r" % expr)
+
+    LETTER_OR_DIGIT = re.compile('[a-zA-Z0-9_]')
+    LETTER = re.compile('[a-zA-Z_]')
+
+    def escape_identifier(self, name):
+        letters = []
+
+        if not self.LETTER.match(name[0]):
+            letters.append('_')
+
+        for letter in name:
+            if not self.LETTER_OR_DIGIT.match(letter):
+                letters.append('_%x' % ord(letter))
+            else:
+                letters.append(letter)
+
+        return ''.join(letters)
+
+    def compile(self, program):
+        self.code = Stream()
+
+        assert isinstance(program, ast.Program)
+
+        for line in PREAMBLE.strip().split('\n'):
+            self.code.writeline(line)
+
+        self.compile_statements(program.statements)
+
+        return self.code
+
+    def compile_statements(self, statements):
+        for statement in statements:
+            if statement is None:
+                continue
+
+            if isinstance(statement, list):
+                self.compile_statements(statement)
+                continue
+
+            if isinstance(statement, ast.VariableDeclaration):
+                assert isinstance(statement.node, ast.Identifier)
+
+                self.code.writeline('%s = %s' % (self.escape_identifier(statement.node.name), self.compile_expression(statement.expr)))
+                continue
+
+            if isinstance(statement, ast.If):
+                expression = self.compile_expression(statement.expr)
+
+                self.code.writeline('if %s:' % expression)
+                self.code.indent()
+                self.compile_statements(statement.true)
+                self.code.dedent()
+
+                if statement.false:
+                    self.code.writeline('else:')
+                    self.code.indent()
+                    self.compile_statements(statement.false)
+                    self.code.dedent()
+
+                continue
+
+            if isinstance(statement, ast.Return):
+                self.code.writeline('return %s' % self.compile_expression(statement.expression))
+                continue
+
+            self.code.writeline(self.compile_expression(statement))
+            
+            continue
+
+            raise Exception("Unexpected statement %r" % statement)
 
 
 js = open('page1.bemhtml.js').read()
 
 parser = Parser()
 
-result = compile(parser.parse(js))
+result = Compiler().compile(parser.parse(js))
 
 print result.source
-print result.lineno, 'lines'
