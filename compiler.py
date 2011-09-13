@@ -16,7 +16,7 @@ class Undefined(object):
     def __getitem__(self, *args):
         raise TypeError('undefined has no properties')
 
-    def __str__(self):
+    def __unicode__(self):
         return 'undefined'
 
     __setitem__ = __getitem__
@@ -31,9 +31,15 @@ class Object(dict):
 
     def __getitem__(self, item):
         try:
-            return super(Object, self).__getitem__(item)
+            return super(Object, self).__getitem__(unicode(item))
         except (KeyError, TypeError):
             return undefined
+
+    def __setitem__(self, item, value):
+        return super(Object, self).__setitem__(unicode(item), value)
+
+    def __eq__(self, other):
+        return False
 
 
 class Array(list):
@@ -120,12 +126,12 @@ class Scope(RootScope):
 
         return value
 
-class String(str):
+class String(unicode):
     def __add__(self, other):
         if not isinstance(other, String):
             return self + String(other)
 
-        return str.__add__(self, other)
+        return unicode.__add__(self, other)
 
 def forinloop(scope, item, iterator, statement):
     scope = Scope(scope)
@@ -216,11 +222,11 @@ class Compiler(object):
     def optimize_expression(self, expr):
         pass
 
-    def compile_assignment(self, lvalue, format):
+    def compile_assignment(self, lvalue, operator, *args):
         if isinstance(lvalue, ast.Identifier):
-            return ("scope" + format) % repr(lvalue.name)
+            return ("scope" + operator) % ((repr(lvalue.name),) + args)
         elif isinstance(lvalue, ast.PropertyAccessor):
-            return ("%s"+ format) % (self.compile_expression(lvalue.node), self.compile_expression(lvalue.element))
+            return ("%s"+ operator) % ((self.compile_expression(lvalue.node), self.compile_expression(lvalue.element)) + args)
         else:
             raise CompileError("Cannot assign %r" % expr)
 
@@ -269,7 +275,7 @@ class Compiler(object):
             return "(%s %s %s)" % (self.compile_expression(expr.left), operator, self.compile_expression(expr.right))
 
         if isinstance(expr, ast.Assign):
-            return self.compile_assignment(expr.node, '.__setitem__(%%s, %s)' % self.compile_expression(expr.expr))
+            return self.compile_assignment(expr.node, '.__setitem__(%s, %s)', self.compile_expression(expr.expr))
 
         if isinstance(expr, ast.FuncCall):
             return "%s(%s)" % (self.compile_expression(expr.node), ",".join(map(self.compile_expression, expr.arguments or [])))
@@ -278,7 +284,17 @@ class Compiler(object):
             properties = []
             for assignment in expr.properties:
                 assert isinstance(assignment, ast.Assign) and assignment.operator == ':'
-                properties.append("(%s, %s)" % (self.compile_expression(assignment.node), self.compile_expression(assignment.expr)))
+
+                if isinstance(assignment.node, ast.Identifier):
+                    key = unicode(assignment.node.name)
+                elif isinstance(assignment.node, ast.String):
+                    key = unicode(assignment.node.data[1:-1])
+                elif isinstance(assignment.node, ast.Number):
+                    key = unicode(assignment.node.value)
+                else:
+                    assert False
+                
+                properties.append("(%r,%s)" % (key, self.compile_expression(assignment.expr)))
                 
             return "Object([%s])" % ",".join(properties)
 
@@ -373,7 +389,7 @@ class Compiler(object):
                 continue
 
             if isinstance(statement, ast.Assign):
-                stream.writeline(self.compile_assignment(statement.node, "[%%s]=%r" % self.compile_expression(statement.expr)))
+                stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_expression(statement.expr)))
                 continue
 
             if isinstance(statement, ast.Return):
