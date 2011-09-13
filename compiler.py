@@ -12,12 +12,27 @@ from compiler import *
 scope=RootScope()
 """
 
+class NaN(object):
+    pass
+
+nan = NaN()
+
 class Undefined(object):
     def __getitem__(self, *args):
         raise TypeError('undefined has no properties')
 
     def __str__(self):
         return 'undefined'
+
+    def __repr__(self):
+        return 'undefined'
+
+    def __call__(self, *args):
+        raise TypeError('undefined is not a function')
+
+    def __add__(self, other):
+        if isinstance(other, int):
+            return nan
 
     __setitem__ = __getitem__
 
@@ -38,40 +53,69 @@ class Object(dict):
     def __setitem__(self, item, value):
         return super(Object, self).__setitem__(unicode(item), value)
 
+    def prefixincr(self, item, increment):
+        value = self[item] + increment
+        self[item] = value
+        return value
+
+    def postfixincr(self, item, increment):
+        value = self[item]
+        self[item] = value + increment
+        return value
+    
     def __eq__(self, other):
         return False
 
+    def __repr__(self):
+        return "Object(%s)" % dict.__repr__(self)
 
-class Array(list):
-    def __init__(self, items):
-        super(Array, self).__init__(items)
+
+class Array(Object):
+    def __init__(self, *args):
+        self.items = list(*args)
+
+        self['push'] = Function(self.push)
+
+    @classmethod
+    def push(cls, this, scope):
+        this.items.extend(scope['arguments'])
 
     def __getitem__(self, item):
         try:
+            return self.items[int(item)]
+        except (IndexError, ValueError):
             return super(Array, self).__getitem__(item)
-        except (TypeError, IndexError):
-            return undefined
 
 
-class Function(object):
-    def __init__(self, scope, parameters, code):
-        self.scope = scope
-        self.parameters = parameters
+def apply(this, instance=None, args=[]):
+    if not callable(this):
+        raise TypeError('Function.prototype.apply called on incompatible %r' % this)
+
+    return this(instance or this, *args)
+
+
+class Function(Object):
+    def __init__(self, code, parameters=None, scope=None):
         self.code = code
+        self.parameters = parameters or []
+        self.scope = scope or RootScope()
 
-    def __call__(self, *args):
-        return self.apply(args=args)
+        self['apply'] = apply
 
-    def apply(self, this=undefined, args=Array([])):
+    def __call__(self, this, *args):
         scope = Scope(self.scope)
 
-        scope.var('this', this)
-        scope.var('arguments', args)
+        arguments = Array(args)
+
+        scope.var('arguments', arguments)
 
         for i, p in enumerate(self.parameters):
-            scope.var(p, args[i])
+            scope.var(p, arguments[i])
 
-        return self.code(scope)
+        return self.code(this, scope)
+
+    def __repr__(self):
+        return "Function(%s)" % dict.__repr__(self)
 
 
 class ReferenceError(Exception):
@@ -83,6 +127,9 @@ class RootScope(object):
         self.variables = {}
 
     def __getitem__(self, item):
+        if item == 'undefined':
+            return undefined
+
         try:
             return self.variables[item]
         except KeyError:
@@ -92,19 +139,11 @@ class RootScope(object):
         self.variables[item] = value
         return value
 
-    def prefixincr(self, item, increment):
-        value = self[item] + increment
-        self[item] = value
-        return value
-
-    def postfixincr(self, item, increment):
-        value = self[item]
-        self[item] = value + increment
-        return value
-    
-
     def var(self, name, value):
         self.variables[name] = value
+
+    def __repr__(self):
+        return "Scope(%r)" % self.variables
 
 
 class Scope(RootScope):
@@ -113,6 +152,9 @@ class Scope(RootScope):
         super(Scope, self).__init__()
 
     def __getitem__(self, item):
+        if item == 'undefined':
+            return undefined
+
         try:
             return self.variables[item]
         except KeyError:
@@ -126,12 +168,20 @@ class Scope(RootScope):
 
         return value
 
+
 class String(unicode):
     def __add__(self, other):
         if not isinstance(other, String):
             return self + String(other)
 
         return unicode.__add__(self, other)
+
+    def __getitem__(self, item):
+        try:
+            return unicode[item]
+        except (TypeError, IndexError):
+            return undefined
+
 
 def forinloop(scope, item, iterator, statement):
     scope = Scope(scope)
@@ -244,7 +294,7 @@ class Compiler(object):
 
             parameters = [repr(p.name) for p in expr.parameters or []]
 
-            return "Function(scope,[%s],%s)" % (','.join(parameters), self.compile_statements(expr.statements))
+            return "Function(%s,[%s],scope)" % (self.compile_statements(expr.statements), ','.join(parameters))
 
         if isinstance(expr, ast.UnaryOp):
             operator = expr.operator
@@ -258,7 +308,7 @@ class Compiler(object):
             if operator == '++':
                 return self.compile_assignment(expr.value, ".postfixincr(%s,1)" if expr.postfix else '.prefixincr(%s,1)')
 
-            return "%s (%s)" % (operator, self.compile_expression(expr.value))
+            return "%s(%s)" % (operator, self.compile_expression(expr.value))
 
         if isinstance(expr, ast.BinOp):
             operator = expr.operator
@@ -281,7 +331,14 @@ class Compiler(object):
             return self.compile_assignment(expr.node, '.__setitem__(%s, %s)', self.compile_expression(expr.expr))
 
         if isinstance(expr, ast.FuncCall):
-            return "%s(%s)" % (self.compile_expression(expr.node), ",".join(map(self.compile_expression, expr.arguments or [])))
+            args = map(self.compile_expression, expr.arguments or [])
+
+            if isinstance(expr.node, ast.PropertyAccessor):
+                instance = self.compile_expression(expr.node.node)
+            else:
+                instance = 'undefined'
+
+            return "%s(%s,%s)" % (self.compile_expression(expr.node), instance, ",".join(args))
 
         if isinstance(expr, ast.Object):
             properties = []
@@ -337,6 +394,9 @@ class Compiler(object):
             return 'String(%r)' % expr.data[1:-1]
 
         if isinstance(expr, ast.Identifier):
+            if expr.name == 'undefined':
+                return 'undefined'
+
             return "scope[%r]" % expr.name
 
         if isinstance(expr, ast.Array):
@@ -344,7 +404,7 @@ class Compiler(object):
 
         if isinstance(expr, str):
             if expr == 'this':
-                return "scope['this']"
+                return "this"
 
         if expr is None:
             return 'undefined'
@@ -356,7 +416,7 @@ class Compiler(object):
             name = self.generate_name()
             stream = Stream()
             self.functions.append(stream)
-            stream.writeline('def %s(scope):' % name)
+            stream.writeline('def %s(this,scope):' % name)
             stream.indent()
         else:
             name = None
