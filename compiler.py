@@ -16,7 +16,7 @@ class Undefined(object):
     def __getitem__(self, *args):
         raise TypeError('undefined has no properties')
 
-    def __unicode__(self):
+    def __str__(self):
         return 'undefined'
 
     __setitem__ = __getitem__
@@ -210,6 +210,9 @@ class Compiler(object):
 
         self.compile_statements(program.statements, stream)
 
+        for f in self.functions:
+            f.writeline('return undefined')
+
         self.functions.append(stream)
 
         return "".join(f.source for f in self.functions)
@@ -260,7 +263,7 @@ class Compiler(object):
         if isinstance(expr, ast.BinOp):
             operator = expr.operator
 
-            if operator == '===':
+            if operator == '===': # hack
                 operator = '=='
 
             if operator == '!==':
@@ -344,7 +347,7 @@ class Compiler(object):
                 return "scope['this']"
 
         if expr is None:
-            return ''
+            return 'undefined'
 
         raise Exception("Unexpected node %r" % expr)
 
@@ -397,6 +400,8 @@ class Compiler(object):
                 continue
 
             stream.writeline(self.compile_expression(statement))
+
+        #stream.writeline('return undefined')
             
         return name
 
