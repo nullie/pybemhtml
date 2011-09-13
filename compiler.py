@@ -8,19 +8,161 @@ from pyjsparser.parser import Parser
 
 
 PREAMBLE = """
-from compiler import _pybemhtml_Function
+from compiler import *
+scope=RootScope()
 """
 
+class Undefined(object):
+    def __getitem__(self, *args):
+        raise TypeError('undefined has no properties')
 
-class _pybemhtml_Function(object):
-    def __init__(self, function):
-        self.function = function
+    def __str__(self):
+        return 'undefined'
+
+    __setitem__ = __getitem__
+
+
+undefined = Undefined()
+
+
+class Object(dict):
+    def __init__(self, *args, **kwargs):
+        super(Object, self).__init__(*args, **kwargs)
+
+    def __getitem__(self, item):
+        try:
+            return super(Object, self).__getitem__(item)
+        except (KeyError, TypeError):
+            return undefined
+
+
+class Array(list):
+    def __init__(self, items):
+        super(Array, self).__init__(items)
+
+    def __getitem__(self, item):
+        try:
+            return super(Array, self).__getitem__(item)
+        except (TypeError, IndexError):
+            return undefined
+
+
+class Function(object):
+    def __init__(self, scope, parameters, code):
+        self.scope = scope
+        self.parameters = parameters
+        self.code = code
 
     def __call__(self, *args):
-        return self.function(None, args)
+        return self.apply(args=args)
 
-    def apply(self, this=None, args=[]):
-        return self.function(this, args)
+    def apply(self, this=undefined, args=Array([])):
+        scope = Scope(self.scope)
+
+        scope.var('this', this)
+        scope.var('arguments', args)
+
+        for i, p in enumerate(self.parameters):
+            scope.var(p, args[i])
+
+        return self.code(scope)
+
+
+class ReferenceError(Exception):
+    pass
+
+
+class RootScope(object):
+    def __init__(self):
+        self.variables = {}
+
+    def __getitem__(self, item):
+        try:
+            return self.variables[item]
+        except KeyError:
+            raise ReferenceError('%s is not defined' % item)
+
+    def __setitem__(self, item, value):
+        self.variables[item] = value
+        return value
+
+    def prefixincr(self, item, increment):
+        value = self[item] + increment
+        self[item] = value
+        return value
+
+    def postfixincr(self, item, increment):
+        value = self[item]
+        self[item] = value + increment
+        return value
+    
+
+    def var(self, name, value):
+        self.variables[name] = value
+
+
+class Scope(RootScope):
+    def __init__(self, parent=RootScope()):
+        self.parent = parent
+        super(Scope, self).__init__()
+
+    def __getitem__(self, item):
+        try:
+            return self.variables[item]
+        except KeyError:
+            return self.parent[item]
+
+    def __setitem__(self, item, value):
+        if item in self.variables:
+            self.variables[item] = value
+        else:
+            self.parent[item] = value
+
+        return value
+
+class String(str):
+    def __add__(self, other):
+        if not isinstance(other, String):
+            return self + String(other)
+
+        return str.__add__(self, other)
+
+def forinloop(scope, item, iterator, statement):
+    scope = Scope(scope)
+
+    for value in iterator:
+        scope.var(item, value)
+        
+        statement(scope)
+
+
+def whileloop(scope, condition, statement):
+    scope = Scope(scope)
+
+    while condition(scope):
+        statement(scope)
+
+
+def wrap(json):
+    if isinstance(json, dict):
+        return Object((wrap(key), wrap(value)) for key, value in json.items())
+
+    if isinstance(json, list):
+        return Array(wrap(json) for json in json)
+
+    if isinstance(json, str):
+        return String(json)
+
+    if isinstance(json, int):
+        return json
+
+    if isinstance(json, float):
+        return json
+
+    raise TypeError("Unknown JSON type %r" % json)
+
+class CompileError(Exception):
+    pass
 
 
 class Stream(object):
@@ -47,26 +189,40 @@ class Compiler(object):
     def __init__(self):
         pass
 
-    def compile(self, program):
-        self.code = Stream()
+    def compile(self, js):
+        self.functions = []
         self.name_counter = 0
 
-        for line in PREAMBLE.strip().split('\n'):
-            self.code.writeline(line)
+        program = Parser().parse(js)
 
         assert isinstance(program, ast.Program)
 
-        self.compile_statements(program.statements)
+        stream = Stream()
 
-        return self.code
+        for line in PREAMBLE.strip().split('\n'):
+            stream.writeline(line)
+
+        self.compile_statements(program.statements, stream)
+
+        self.functions.append(stream)
+
+        return "".join(f.source for f in self.functions)
 
     def generate_name(self):
-        name = '_pybemhtml_%s' % self.name_counter
+        name = 'f%s' % self.name_counter
         self.name_counter += 1
         return name
 
     def optimize_expression(self, expr):
         pass
+
+    def compile_assignment(self, lvalue, format):
+        if isinstance(lvalue, ast.Identifier):
+            return ("scope" + format) % repr(lvalue.name)
+        elif isinstance(lvalue, ast.PropertyAccessor):
+            return ("%s"+ format) % (self.compile_expression(lvalue.node), self.compile_expression(lvalue.element))
+        else:
+            raise CompileError("Cannot assign %r" % expr)
 
     def compile_expression(self, expr):
         if isinstance(expr, list):
@@ -74,23 +230,24 @@ class Compiler(object):
             return self.compile_expression(expr[0])
 
         if isinstance(expr, ast.FuncDecl):
-            name = self.generate_name()
-            
-            self.code.writeline('def %s(this, arguments):' % (name))
-            self.code.indent()
+            for p in expr.parameters or []:
+                assert isinstance(p, ast.Identifier)
 
-            for i, parameter in enumerate(expr.parameters or []):
-                self.code.writeline('%s = arguments[%d]' % (self.compile_expression(parameter), i))
-            
-            self.compile_statements(expr.statements)
-            self.code.dedent()
-            return "_pybemhtml_Function(%s)" % name
+            parameters = [repr(p.name) for p in expr.parameters or []]
+
+            return "Function(scope,[%s],%s)" % (','.join(parameters), self.compile_statements(expr.statements))
 
         if isinstance(expr, ast.UnaryOp):
             operator = expr.operator
 
             if operator == '!':
                 operator = 'not'
+
+            if operator == '--':
+                return self.compile_assignment(expr.value, ".postfixincr(%s,-1)" if expr.postfix else '.prefixincr(%s,-1)')
+
+            if operator == '++':
+                return self.compile_assignment(expr.value, ".postfixincr(%s,1)" if expr.postfix else '.prefixincr(%s,1)')
 
             return "%s (%s)" % (operator, self.compile_expression(expr.value))
 
@@ -112,7 +269,7 @@ class Compiler(object):
             return "(%s %s %s)" % (self.compile_expression(expr.left), operator, self.compile_expression(expr.right))
 
         if isinstance(expr, ast.Assign):
-            return "assign(%s,%s)" % (self.compile_expression(expr.node), self.compile_expression(expr.expr))
+            return self.compile_assignment(expr.node, '.__setitem__(%%s, %s)' % self.compile_expression(expr.expr))
 
         if isinstance(expr, ast.FuncCall):
             return "%s(%s)" % (self.compile_expression(expr.node), ",".join(map(self.compile_expression, expr.arguments or [])))
@@ -121,9 +278,9 @@ class Compiler(object):
             properties = []
             for assignment in expr.properties:
                 assert isinstance(assignment, ast.Assign) and assignment.operator == ':'
-                properties.append("%s: %s" % (self.compile_expression(assignment.node), self.compile_expression(assignment.expr)))
+                properties.append("(%s, %s)" % (self.compile_expression(assignment.node), self.compile_expression(assignment.expr)))
                 
-            return "{%s}" % ",".join(properties)
+            return "Object([%s])" % ",".join(properties)
 
         if isinstance(expr, ast.Boolean):
             if expr.value == 'true':
@@ -138,21 +295,14 @@ class Compiler(object):
 
         if isinstance(expr, ast.ForIn):
             assert isinstance(expr.item, ast.Identifier)
-            self.code.writeline('for %s in %s:' % (expr.item.name, self.compile_expression(expr.iterator)))
-            self.code.indent()
-            self.compile_statements(expr.statement)
-            self.code.dedent()
-            return ''
+            
+            return 'forinloop(scope,lambda scope:%s,%s)' % (self.compile_expression(expr.iterator), self.compile_statements(expr.statement))
 
         if isinstance(expr, ast.While):
-            self.code.writeline('while %s:' % self.compile_expression(expr.condition))
-            self.code.indent()
-            self.compile_statements(expr.statement)
-            self.code.dedent()
-            return ''
+            return 'whileloop(scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements(expr.statement))
 
-        if isinstance(expr, ast.While):
-            pass
+        if isinstance(expr, ast.New):
+            return 'new(%s, [%s])' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
 
         if isinstance(expr, ast.Number):
             return expr.value
@@ -165,85 +315,79 @@ class Compiler(object):
             return '%s[%r]' % (self.compile_expression(expr.node), expr.element.name)
 
         if isinstance(expr, ast.String):
-            return repr(expr.data[1:-1])
+            return 'String(%r)' % expr.data[1:-1]
 
         if isinstance(expr, ast.Identifier):
-            return expr.name
+            return "scope[%r]" % expr.name
 
         if isinstance(expr, ast.Array):
-            return "[%s]" % ','.join(map(self.compile_expression, expr.items or []))
+            return "Array([%s])" % ','.join(map(self.compile_expression, expr.items or []))
 
         if isinstance(expr, str):
-            return expr
+            if expr == 'this':
+                return "scope['this']"
 
         if expr is None:
             return ''
 
         raise Exception("Unexpected node %r" % expr)
 
-    LETTER_OR_DIGIT = re.compile('[a-zA-Z0-9_]')
-    LETTER = re.compile('[a-zA-Z_]')
+    def compile_statements(self, statements, stream=None):
+        if not stream:
+            name = self.generate_name()
+            stream = Stream()
+            self.functions.append(stream)
+            stream.writeline('def %s(scope):' % name)
+            stream.indent()
+        else:
+            name = None
 
-    def escape_identifier(self, name):
-        letters = []
-
-        if not self.LETTER.match(name[0]):
-            letters.append('_')
-
-        for letter in name:
-            if not self.LETTER_OR_DIGIT.match(letter):
-                letters.append('_%x' % ord(letter))
-            else:
-                letters.append(letter)
-
-        return ''.join(letters)
-
-    def compile_statements(self, statements):
         for statement in statements:
             if statement is None:
                 continue
 
             if isinstance(statement, list):
-                self.compile_statements(statement)
+                self.compile_statements(statement, stream)
                 continue
 
             if isinstance(statement, ast.VariableDeclaration):
                 assert isinstance(statement.node, ast.Identifier)
 
-                self.code.writeline('%s = %s' % (self.escape_identifier(statement.node.name), self.compile_expression(statement.expr)))
+                stream.writeline('scope.var(%s, %s)' % (repr(statement.node.name), self.compile_expression(statement.expr)))
                 continue
 
             if isinstance(statement, ast.If):
                 expression = self.compile_expression(statement.expr)
 
-                self.code.writeline('if %s:' % expression)
-                self.code.indent()
-                self.compile_statements(statement.true)
-                self.code.dedent()
+                stream.writeline('if %s:' % expression)
+                stream.indent()
+                self.compile_statements(statement.true, stream)
+                stream.dedent()
 
                 if statement.false:
-                    self.code.writeline('else:')
-                    self.code.indent()
-                    self.compile_statements(statement.false)
-                    self.code.dedent()
+                    stream.writeline('else:')
+                    stream.indent()
+                    self.compile_statements(statement.false, stream)
+                    stream.dedent()
 
+                continue
+
+            if isinstance(statement, ast.Assign):
+                stream.writeline(self.compile_assignment(statement.node, "[%%s]=%r" % self.compile_expression(statement.expr)))
                 continue
 
             if isinstance(statement, ast.Return):
-                self.code.writeline('return %s' % self.compile_expression(statement.expression))
+                stream.writeline('return %s' % self.compile_expression(statement.expression))
                 continue
 
-            self.code.writeline(self.compile_expression(statement))
+            stream.writeline(self.compile_expression(statement))
             
-            continue
-
-            raise Exception("Unexpected statement %r" % statement)
+        return name
 
 
-js = open('page1.bemhtml.js').read()
+if __name__ == '__main__':
+    js = open('test.js').read()
 
-parser = Parser()
+    result = Compiler().compile(js)
 
-result = Compiler().compile(parser.parse(js))
-
-print result.source
+    print result
