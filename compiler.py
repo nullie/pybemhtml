@@ -6,30 +6,7 @@ sys.path.append('../pyjsparser')
 from pyjsparser import ast
 from pyjsparser.parser import Parser
 
-
-PREAMBLE = """
-from lib import *
-scope=defaultscope()
-"""
-
-
-def wrap(json):
-    if isinstance(json, dict):
-        return Object((wrap(key), wrap(value)) for key, value in json.items())
-
-    if isinstance(json, list):
-        return Array(wrap(json) for json in json)
-
-    if isinstance(json, str):
-        return String(json)
-
-    if isinstance(json, int):
-        return json
-
-    if isinstance(json, float):
-        return json
-
-    raise TypeError("Unknown JSON type %r" % json)
+CONTEXT = ['Object', 'Array', 'Boolean', 'Number', 'Function', 'String', 'true', 'false', 'NaN', 'scope']
 
 class CompileError(Exception):
     pass
@@ -39,7 +16,11 @@ class Stream(object):
     def __init__(self):
         self._indent = 0
         self.source = ""
-        self.lineno = 0
+
+    def child(self):
+        c = Stream()
+        c._indent = self._indent
+        return c
 
     def indent(self):
         self._indent += 1
@@ -50,9 +31,11 @@ class Stream(object):
         if self._indent < 0:
             raise Exception("Unexpected dedent")
 
+    def write(self, source):
+        self.source += source
+
     def writeline(self, line):
         self.source += " " * self._indent + line + '\n'
-        self.lineno += 1
 
 
 class Compiler(object):
@@ -67,19 +50,33 @@ class Compiler(object):
 
         assert isinstance(program, ast.Program)
 
-        stream = Stream()
+        self.stream = Stream()
 
-        for line in PREAMBLE.strip().split('\n'):
-            stream.writeline(line)
+        self.stream.writeline('from lib import *')
 
-        self.compile_statements(program.statements, stream)
+        self.stream.writeline('def program():')
+
+        self.stream.indent()
+
+        self.stream.writeline('context=init()')
+
+        for name in CONTEXT:
+            self.stream.writeline("%s=context['%s']" % (name, name))
+
+        program_stream = self.stream.child()
+
+        self.compile_statements(program.statements, program_stream, in_function=False)
 
         for f in self.functions:
             f.writeline('return undefined')
 
-        self.functions.append(stream)
+        self.stream.write("".join(f.source for f in self.functions))
 
-        return "".join(f.source for f in self.functions)
+        self.stream.write(program_stream.source)
+
+        self.stream.writeline('return scope')
+
+        return self.stream.source
 
     def generate_name(self):
         name = 'f%s' % self.name_counter
@@ -182,9 +179,9 @@ class Compiler(object):
 
         if isinstance(expr, ast.Boolean):
             if expr.value == 'true':
-                return 'True'
+                return 'true'
             elif expr.value == 'false':
-                return 'False'
+                return 'false'
             else:
                 assert False
 
@@ -200,10 +197,10 @@ class Compiler(object):
             return 'whileloop(scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements(expr.statement))
 
         if isinstance(expr, ast.New):
-            return 'new(%s, Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
+            return 'new(%s,Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
 
         if isinstance(expr, ast.Number):
-            return expr.value
+            return 'Number(%s)' % expr.value
 
         if isinstance(expr, ast.BracketAccessor):
             return '%s[%s]' % (self.compile_expression(expr.node), self.compile_expression(expr.element))
@@ -233,10 +230,10 @@ class Compiler(object):
 
         raise Exception("Unexpected node %r" % expr)
 
-    def compile_statements(self, statements, stream=None):
+    def compile_statements(self, statements, stream=None, in_function=True):
         if not stream:
             name = self.generate_name()
-            stream = Stream()
+            stream = self.stream.child()
             self.functions.append(stream)
             stream.writeline('def %s(this,scope):' % name)
             stream.indent()
@@ -257,7 +254,7 @@ class Compiler(object):
             if isinstance(statement, ast.VariableDeclaration):
                 assert isinstance(statement.node, ast.Identifier)
 
-                stream.writeline('scope.var(%s, %s)' % (repr(statement.node.name), self.compile_expression(statement.expr)))
+                stream.writeline('scope.var(%s,%s)' % (repr(statement.node.name), self.compile_expression(statement.expr)))
                 continue
 
             if isinstance(statement, ast.If):
@@ -286,13 +283,13 @@ class Compiler(object):
                     continue
 
             if isinstance(statement, ast.Return):
+                assert in_function
+
                 stream.writeline('return %s' % self.compile_expression(statement.expression))
                 continue
 
             stream.writeline(self.compile_expression(statement))
 
-        #stream.writeline('return undefined')
-            
         return name
 
 
@@ -302,3 +299,8 @@ if __name__ == '__main__':
     result = Compiler().compile(js)
 
     print result
+
+    exec(result)
+
+    scope = program()
+    print scope['foo'](scope['foo'], scope['Array']([]))
