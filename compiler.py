@@ -8,195 +8,9 @@ from pyjsparser.parser import Parser
 
 
 PREAMBLE = """
-from compiler import *
-scope=RootScope()
+from lib import *
+scope=defaultscope()
 """
-
-class NaN(object):
-    pass
-
-nan = NaN()
-
-class Undefined(object):
-    def __getitem__(self, *args):
-        raise TypeError('undefined has no properties')
-
-    def __str__(self):
-        return 'undefined'
-
-    def __repr__(self):
-        return 'undefined'
-
-    def __call__(self, *args):
-        raise TypeError('undefined is not a function')
-
-    def __add__(self, other):
-        if isinstance(other, int):
-            return nan
-
-    __setitem__ = __getitem__
-
-
-undefined = Undefined()
-
-
-class Object(dict):
-    def __init__(self, *args, **kwargs):
-        super(Object, self).__init__(*args, **kwargs)
-
-    def __getitem__(self, item):
-        try:
-            return super(Object, self).__getitem__(unicode(item))
-        except (KeyError, TypeError):
-            return undefined
-
-    def __setitem__(self, item, value):
-        return super(Object, self).__setitem__(unicode(item), value)
-
-    def prefixincr(self, item, increment):
-        value = self[item] + increment
-        self[item] = value
-        return value
-
-    def postfixincr(self, item, increment):
-        value = self[item]
-        self[item] = value + increment
-        return value
-    
-    def __eq__(self, other):
-        return False
-
-    def __repr__(self):
-        return "Object(%s)" % dict.__repr__(self)
-
-
-class Array(Object):
-    def __init__(self, *args):
-        self.items = list(*args)
-
-        self['push'] = Function(self.push)
-
-    @classmethod
-    def push(cls, this, scope):
-        this.items.extend(scope['arguments'])
-
-    def __getitem__(self, item):
-        try:
-            return self.items[int(item)]
-        except (IndexError, ValueError):
-            return super(Array, self).__getitem__(item)
-
-
-def apply(this, instance=None, args=[]):
-    if not callable(this):
-        raise TypeError('Function.prototype.apply called on incompatible %r' % this)
-
-    return this(instance or this, *args)
-
-
-class Function(Object):
-    def __init__(self, code, parameters=None, scope=None):
-        self.code = code
-        self.parameters = parameters or []
-        self.scope = scope or RootScope()
-
-        self['apply'] = apply
-
-    def __call__(self, this, *args):
-        scope = Scope(self.scope)
-
-        arguments = Array(args)
-
-        scope.var('arguments', arguments)
-
-        for i, p in enumerate(self.parameters):
-            scope.var(p, arguments[i])
-
-        return self.code(this, scope)
-
-    def __repr__(self):
-        return "Function(%s)" % dict.__repr__(self)
-
-
-class ReferenceError(Exception):
-    pass
-
-
-class RootScope(object):
-    def __init__(self):
-        self.variables = {}
-
-    def __getitem__(self, item):
-        if item == 'undefined':
-            return undefined
-
-        try:
-            return self.variables[item]
-        except KeyError:
-            raise ReferenceError('%s is not defined' % item)
-
-    def __setitem__(self, item, value):
-        self.variables[item] = value
-        return value
-
-    def var(self, name, value):
-        self.variables[name] = value
-
-    def __repr__(self):
-        return "Scope(%r)" % self.variables
-
-
-class Scope(RootScope):
-    def __init__(self, parent=RootScope()):
-        self.parent = parent
-        super(Scope, self).__init__()
-
-    def __getitem__(self, item):
-        if item == 'undefined':
-            return undefined
-
-        try:
-            return self.variables[item]
-        except KeyError:
-            return self.parent[item]
-
-    def __setitem__(self, item, value):
-        if item in self.variables:
-            self.variables[item] = value
-        else:
-            self.parent[item] = value
-
-        return value
-
-
-class String(unicode):
-    def __add__(self, other):
-        if not isinstance(other, String):
-            return self + String(other)
-
-        return unicode.__add__(self, other)
-
-    def __getitem__(self, item):
-        try:
-            return unicode[item]
-        except (TypeError, IndexError):
-            return undefined
-
-
-def forinloop(scope, item, iterator, statement):
-    scope = Scope(scope)
-
-    for value in iterator:
-        scope.var(item, value)
-        
-        statement(scope)
-
-
-def whileloop(scope, condition, statement):
-    scope = Scope(scope)
-
-    while condition(scope):
-        statement(scope)
 
 
 def wrap(json):
@@ -283,19 +97,27 @@ class Compiler(object):
         else:
             raise CompileError("Cannot assign %r" % expr)
 
+    def compile_function(self, expr):
+        for p in expr.parameters or []:
+            assert isinstance(p, ast.Identifier)
+
+        parameters = [repr(p.name) for p in expr.parameters or []]
+
+        return "Function(%s,[%s],scope)" % (self.compile_statements(expr.statements), ','.join(parameters))        
+
     def compile_expression(self, expr):
         if isinstance(expr, list):
             assert len(expr) == 1
             return self.compile_expression(expr[0])
 
         if isinstance(expr, ast.FuncDecl):
-            for p in expr.parameters or []:
-                assert isinstance(p, ast.Identifier)
+            compiled = self.compile_function(expr)
+            
+            if expr.node:
+                return self.compile_assignment(expr.node, '.__setitem__(%s,%s)', compiled)
 
-            parameters = [repr(p.name) for p in expr.parameters or []]
-
-            return "Function(%s,[%s],scope)" % (self.compile_statements(expr.statements), ','.join(parameters))
-
+            return compiled
+                
         if isinstance(expr, ast.UnaryOp):
             operator = expr.operator
 
@@ -338,7 +160,7 @@ class Compiler(object):
             else:
                 instance = 'undefined'
 
-            return "%s(%s,%s)" % (self.compile_expression(expr.node), instance, ",".join(args))
+            return "%s(%s,Array([%s]))" % (self.compile_expression(expr.node), instance, ",".join(args))
 
         if isinstance(expr, ast.Object):
             properties = []
@@ -354,9 +176,9 @@ class Compiler(object):
                 else:
                     assert False
                 
-                properties.append("(%r,%s)" % (key, self.compile_expression(assignment.expr)))
+                properties.append("%r:%s" % (key, self.compile_expression(assignment.expr)))
                 
-            return "Object([%s])" % ",".join(properties)
+            return "Object({%s})" % ",".join(properties)
 
         if isinstance(expr, ast.Boolean):
             if expr.value == 'true':
@@ -378,7 +200,7 @@ class Compiler(object):
             return 'whileloop(scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements(expr.statement))
 
         if isinstance(expr, ast.New):
-            return 'new(%s, [%s])' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
+            return 'new(%s, Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
 
         if isinstance(expr, ast.Number):
             return expr.value
@@ -421,6 +243,9 @@ class Compiler(object):
         else:
             name = None
 
+        if statements is None:
+            return name
+
         for statement in statements:
             if statement is None:
                 continue
@@ -454,6 +279,11 @@ class Compiler(object):
             if isinstance(statement, ast.Assign):
                 stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_expression(statement.expr)))
                 continue
+
+            if isinstance(statement, ast.FuncDecl):
+                if statement.node:
+                    stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_function(statement)))
+                    continue
 
             if isinstance(statement, ast.Return):
                 stream.writeline('return %s' % self.compile_expression(statement.expression))
