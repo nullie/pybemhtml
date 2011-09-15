@@ -6,8 +6,6 @@ sys.path.append('../pyjsparser')
 from pyjsparser import ast
 from pyjsparser.parser import Parser
 
-CONTEXT = ['Object', 'Array', 'Boolean', 'Number', 'Function', 'String', 'true', 'false', 'NaN', 'scope']
-
 class CompileError(Exception):
     pass
 
@@ -52,31 +50,16 @@ class Compiler(object):
 
         self.stream = Stream()
 
-        self.stream.writeline('from lib import *')
+        self.stream.writeline('from library import *')
 
-        self.stream.writeline('def program():')
-
-        self.stream.indent()
-
-        self.stream.writeline('context=init()')
-
-        for name in CONTEXT:
-            self.stream.writeline("%s=context['%s']" % (name, name))
-
-        program_stream = self.stream.child()
-
-        self.compile_statements(program.statements, program_stream, in_function=False)
+        self.compile_statements(program.statements, self.stream, in_function=False)
 
         for f in self.functions:
             f.writeline('return undefined')
 
-        self.stream.write("".join(f.source for f in self.functions))
+        self.functions.append(self.stream)
 
-        self.stream.write(program_stream.source)
-
-        self.stream.writeline('return scope')
-
-        return self.stream.source
+        return "".join(f.source for f in self.functions)
 
     def generate_name(self):
         name = 'f%s' % self.name_counter
@@ -98,9 +81,18 @@ class Compiler(object):
         for p in expr.parameters or []:
             assert isinstance(p, ast.Identifier)
 
+        name = 'function'
+
+        if expr.node:
+            assert isinstance(expr.node, ast.Identifier)
+            name = expr.node.name
+
         parameters = [repr(p.name) for p in expr.parameters or []]
 
-        return "Function(%s,[%s],scope)" % (self.compile_statements(expr.statements), ','.join(parameters))        
+        if name:
+            return "Function(%s,[%s],scope,%r)" % (self.compile_statements(expr.statements), ','.join(parameters), name)        
+        else:
+            return "Function(%s,[%s],scope)" % (name, self.compile_statements(expr.statements), ','.join(parameters))     
 
     def compile_expression(self, expr):
         if isinstance(expr, list):
@@ -302,5 +294,4 @@ if __name__ == '__main__':
 
     exec(result)
 
-    scope = program()
-    print scope['foo'](scope['foo'], scope['Array']([]))
+    print scope['foo'](scope['foo'], Array())
