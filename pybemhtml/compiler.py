@@ -50,7 +50,7 @@ class Compiler(object):
 
         self.stream = Stream()
 
-        self.stream.writeline('from library import *')
+        self.stream.writeline('from pybemhtml.library import *')
 
         self.compile_statements(program.statements, self.stream, in_function=False)
 
@@ -213,9 +213,8 @@ class Compiler(object):
         if isinstance(expr, ast.Array):
             return "Array([%s])" % ','.join(map(self.compile_expression, expr.items or []))
 
-        if isinstance(expr, str):
-            if expr == 'this':
-                return "this"
+        if expr == 'this':
+            return "this"
 
         if expr is None:
             return 'undefined'

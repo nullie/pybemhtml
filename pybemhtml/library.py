@@ -4,6 +4,10 @@ class ReferenceError(Exception):
     pass
 
 
+class InternalError(Exception):
+    pass
+
+
 class Scope(object):
     def __init__(self, parent=None):
         self.variables = {}
@@ -56,7 +60,7 @@ def typeof(value):
     if value is undefined:
         return String('undefined')
 
-    assert False
+    raise InternalError("Unknown object %r" % value)
 
 
 def forinloop(scope, item, iterator, statement):
@@ -384,25 +388,26 @@ class Function(Object):
 
 
 class PythonFunction(Function):
-    def __init__(self, constructor=None, prototype=None):
+    def __init__(self, callable=None, prototype=None):
         Object.__init__(self)
         
-        self.constructor = constructor
+        self.callable = getattr(callable, 'new', callable)
 
         if prototype:
             self.prototype = prototype
 
-        if constructor:
-            self['prototype'] = constructor.prototype
+        if callable:
+            self['prototype'] = getattr(callable, 'prototype', Object())
     
     def __call__(self, this, arguments):
-        return self.constructor.constructor(this, arguments)
+        return self.callable(this, arguments)
 
     def __repr__(self):
         if self.constructor:
             return "%s()" % self.constructor.__name__ 
 
         return "function()"
+
 
 PythonFunction.prototype = Function.prototype = PythonFunction(prototype=Object(Function.properties))
 
@@ -413,6 +418,9 @@ class String(Immutable):
 
         self.string = unicode(s)
 
+    def __hash__(self):
+        return hash(self.string)
+
     def __eq__(self, other):
         if isinstance(other, String):
             return Boolean(self.string == other.string)
@@ -421,9 +429,9 @@ class String(Immutable):
 
     def __add__(self, other):
         if not isinstance(other, String):
-            return String(self.string + String(other))
+            return String(self.string + String(other).string)
 
-        return String(self.string + other)
+        return String(self.string + other.string)
 
     def __repr__(self):
         return repr(self.string)
@@ -437,6 +445,11 @@ false = Boolean(False)
 NaN = Number(Number.NaN)
 
 
+def console_log(this, arguments):
+    print repr(arguments)
+    return undefined
+
+
 scope = Scope({
     'Array': PythonFunction(Array),
     'Boolean': PythonFunction(Boolean),
@@ -444,16 +457,7 @@ scope = Scope({
     'Number': PythonFunction(Number),
     'Object': PythonFunction(Object),
     'String': PythonFunction(String),
+    'console': Object({
+         'log': PythonFunction(console_log),
+    })
 })
-
-
-if __name__ == '__main__':
-    assert scope['Array']['prototype']['push'](scope['Array']['prototype'], Array([1, 2, 3])) == Number(3)
-
-    scope['Object']['prototype']['testproperty'] = 'hello'
-    assert scope['Array']['testproperty'] == 'hello'
-    assert not scope['Array']['hasOwnProperty'](scope['Array'], Array(['testproperty']))
-    assert scope['Object']['prototype']['hasOwnProperty'](scope['Object']['prototype'], Array(['testproperty']))
-
-    assert typeof(scope['Function']) == String('function')
-    assert typeof(scope['Function']['prototype']) == String('function')
