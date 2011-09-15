@@ -63,28 +63,28 @@ def typeof(value):
     raise InternalError("Unknown object %r" % value)
 
 
-def forinloop(scope, item, iterator, statement):
-    scope = Scope(scope)
-
-    for value in iterator:
-        scope.var(item, value)
-        
-        statement(scope)
-
-    return undefined
-
-
 def new(function, arguments):
     this = Object(prototype=function['prototype'])
     function(this, arguments)
     return this
     
 
-def whileloop(scope, condition, statement):
+def forinloop(this, scope, item, iterator, statement):
+    scope = Scope(scope)
+
+    for value in iterator.enumerate():
+        scope.var(item, value)
+        
+        statement(this, scope)
+
+    return undefined
+
+
+def whileloop(this, scope, condition, statement):
     scope = Scope(scope)
 
     while condition(scope):
-        statement(scope)
+        statement(this, scope)
 
     return undefined
 
@@ -117,6 +117,12 @@ class UndefinedType(Base):
     def __add__(self, other):
         if isinstance(other, int):
             return Number(Number.NaN)
+        
+        if isinstance(other, String):
+            return String('undefined' + other.string)
+
+    def __eq__(self, other):
+        return False
 
     def __nonzero__(self):
         return False
@@ -171,7 +177,7 @@ class Object(Base):
 
     def __getitem__(self, item):
         try:
-            return self.properties[item]
+            return self.properties[unicode(item)]
         except KeyError:
             pass
 
@@ -184,7 +190,7 @@ class Object(Base):
         return undefined
 
     def __setitem__(self, item, value):
-        self.properties[item] = value
+        self.properties[unicode(item)] = value
         return value
 
     def prefixincr(self, item, increment):
@@ -229,8 +235,23 @@ class Number(Immutable):
     def __add__(self, other):
         return Number(self.number + other)
 
+    def __sub__(self, other):
+        return Number(self.number - other.number)
+
     def __eq__(self, other):
+        if isinstance(other, Number):
+            return self.number == other.number
+
         return self.number == other.number
+    
+    def __cmp__(self, other):
+        if isinstance(other, Number):
+            return cmp(self.number, other.number)
+
+        return cmp(self.number, other)
+
+    def __neg__(self):
+        return Number(-self.number)
 
     def __repr__(self):
         if self.number is self.NaN:
@@ -246,9 +267,9 @@ class Array(Object):
     def __init__(self, value=[]):
         Object.__init__(self)
 
-        self.items = list(value)
-
-        self['length'] = Number(len(self.items))        
+        self.items = value
+        
+        self['length'] = Number(len(value))
 
     length = Number(0)
 
@@ -278,31 +299,66 @@ class Array(Object):
         return result
 
     @staticmethod
-    def constructor(this, arguments):
-        if len(arguments) == 1 and isinstance(arguments[0], int):
-            return Array([undefined] * arguments[0])
+    def new(this, arguments):
+        if len(arguments) == 1 and isinstance(arguments[0], Number):
+            return Array([undefined] * arguments[0].number)
 
-        return Array(arguments)        
+        return arguments
 
     def __iter__(self):
-        return self.items.__iter__()
+        return iter(self.items)
+
+    def enumerate(self):
+        for property in self.properties:
+            yield String(property)
 
     def pop(self, *args):
         return self.items.pop(*args)
 
     def __len__(self):
         return len(self.items)
+    
+    def parseindex(self, item):
+        index = None
+
+        if isinstance(item, int):
+            index = item
+        elif isinstance(item, Number):
+            index = int(item.number)
+        elif isinstance(item, String):
+            try:
+                index = int(item.string, 10)
+            except ValueError:
+                return None
+
+        if str(index) != str(item):
+            return None
+        
+        if index < 0:
+            return None
+
+        return index
 
     def __getitem__(self, item):
-        try:
-            return self.items[int(item)]
-        except (IndexError, ValueError):
-            return Object.__getitem__(self, item)
+        index = self.parseindex(item)
+
+        if index is not None:
+            try:
+                return self.items[index]
+            except IndexError:
+                pass
+
+        return Object.__getitem__(self, item)
 
     def __setitem__(self, item, value):
-        if isinstance(item, Number):
-            self.items[item.number] = value
-            return value
+        index = self.parseindex(item)
+
+        if index is not None:
+            if self['length'] <= index:
+                self.items.extend([undefined] * (index - self['length'].number + 1))
+                self['length'] = index + 1
+                
+            self.items[index] = value
 
         return Object.__setitem__(self, item, value)
 
@@ -433,8 +489,11 @@ class String(Immutable):
 
         return String(self.string + other.string)
 
+    def __unicode__(self):
+        return self.string
+
     def __repr__(self):
-        return repr(self.string)
+        return '"%s"' % self.string
 
 
 String.prototype = Object(String.properties)
@@ -446,7 +505,7 @@ NaN = Number(Number.NaN)
 
 
 def console_log(this, arguments):
-    print repr(arguments)
+    print ' '.join(repr(arg) for arg in arguments)
     return undefined
 
 

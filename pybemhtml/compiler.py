@@ -183,10 +183,10 @@ class Compiler(object):
         if isinstance(expr, ast.ForIn):
             assert isinstance(expr.item, ast.Identifier)
             
-            return 'forinloop(scope,lambda scope:%s,%s)' % (self.compile_expression(expr.iterator), self.compile_statements(expr.statement))
+            return 'forinloop(this,scope,%r,%s,%s)' % (expr.item.name, self.compile_expression(expr.iterator), self.compile_statements(expr.statement))
 
         if isinstance(expr, ast.While):
-            return 'whileloop(scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements(expr.statement))
+            return 'whileloop(this,scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements(expr.statement))
 
         if isinstance(expr, ast.New):
             return 'new(%s,Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
