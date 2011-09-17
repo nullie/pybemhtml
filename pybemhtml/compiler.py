@@ -1,10 +1,12 @@
 import re
 import sys
 
-sys.path.append('../pyjsparser')
-
 from pyjsparser import ast
 from pyjsparser.parser import Parser
+
+
+IMPORTS = "_Object, _Array, _Boolean, _Number, _RegExp, _String, _Function, true, false, NaN, undefined, typeof, console, scope"
+
 
 class CompileError(Exception):
     pass
@@ -50,7 +52,7 @@ class Compiler(object):
 
         self.stream = Stream()
 
-        self.stream.writeline('from pybemhtml.library import *')
+        self.stream.writeline('from pybemhtml.library import %s' % IMPORTS)
 
         self.compile_statements(program.statements, self.stream, in_function=False)
 
@@ -90,9 +92,9 @@ class Compiler(object):
         parameters = [repr(p.name) for p in expr.parameters or []]
 
         if name:
-            return "Function(%s,[%s],scope,%r)" % (self.compile_statements(expr.statements), ','.join(parameters), name)        
+            return "_Function(%s,[%s],scope,%r)" % (self.compile_statements(expr.statements), ','.join(parameters), name)        
         else:
-            return "Function(%s,[%s],scope)" % (name, self.compile_statements(expr.statements), ','.join(parameters))     
+            return "_Function(%s,[%s],scope)" % (name, self.compile_statements(expr.statements), ','.join(parameters))     
 
     def compile_expression(self, expr):
         if isinstance(expr, list):
@@ -149,10 +151,11 @@ class Compiler(object):
             else:
                 instance = 'undefined'
 
-            return "%s(%s,Array([%s]))" % (self.compile_expression(expr.node), instance, ",".join(args))
+            return "%s(%s,_Array([%s]))" % (self.compile_expression(expr.node), instance, ",".join(args))
 
         if isinstance(expr, ast.Object):
             properties = []
+
             for assignment in expr.properties:
                 assert isinstance(assignment, ast.Assign) and assignment.operator == ':'
 
@@ -167,7 +170,7 @@ class Compiler(object):
                 
                 properties.append("%r:%s" % (key, self.compile_expression(assignment.expr)))
                 
-            return "Object({%s})" % ",".join(properties)
+            return "_Object({%s})" % ",".join(properties)
 
         if isinstance(expr, ast.Boolean):
             if expr.value == 'true':
@@ -189,7 +192,7 @@ class Compiler(object):
             return 'whileloop(this,scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements(expr.statement))
 
         if isinstance(expr, ast.New):
-            return 'new(%s,Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
+            return 'new(%s,_Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
 
         if isinstance(expr, ast.Number):
             return 'Number(%s)' % expr.value
@@ -202,7 +205,7 @@ class Compiler(object):
             return '%s[%r]' % (self.compile_expression(expr.node), expr.element.name)
 
         if isinstance(expr, ast.String):
-            return 'String(%r)' % expr.data[1:-1]
+            return '_String(%r)' % expr.data[1:-1]
 
         if isinstance(expr, ast.Identifier):
             if expr.name == 'undefined':
@@ -211,7 +214,7 @@ class Compiler(object):
             return "scope[%r]" % expr.name
 
         if isinstance(expr, ast.Array):
-            return "Array([%s])" % ','.join(map(self.compile_expression, expr.items or []))
+            return "_Array([%s])" % ','.join(map(self.compile_expression, expr.items or []))
 
         if expr == 'this':
             return "this"
@@ -235,62 +238,52 @@ class Compiler(object):
             return name
 
         for statement in statements:
-            if statement is None:
-                continue
-
-            if isinstance(statement, list):
-                self.compile_statements(statement, stream)
-                continue
-
-            if isinstance(statement, ast.VariableDeclaration):
-                assert isinstance(statement.node, ast.Identifier)
-
-                stream.writeline('scope.var(%s,%s)' % (repr(statement.node.name), self.compile_expression(statement.expr)))
-                continue
-
-            if isinstance(statement, ast.If):
-                expression = self.compile_expression(statement.expr)
-
-                stream.writeline('if %s:' % expression)
-                stream.indent()
-                self.compile_statements(statement.true, stream)
-                stream.dedent()
-
-                if statement.false:
-                    stream.writeline('else:')
-                    stream.indent()
-                    self.compile_statements(statement.false, stream)
-                    stream.dedent()
-
-                continue
-
-            if isinstance(statement, ast.Assign):
-                stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_expression(statement.expr)))
-                continue
-
-            if isinstance(statement, ast.FuncDecl):
-                if statement.node:
-                    stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_function(statement)))
-                    continue
-
-            if isinstance(statement, ast.Return):
-                assert in_function
-
-                stream.writeline('return %s' % self.compile_expression(statement.expression))
-                continue
-
-            stream.writeline(self.compile_expression(statement))
+            self.compile_statement(statement, stream)
 
         return name
 
+    def compile_statement(self, statement, stream):
+        if statement is None:
+            return
 
-if __name__ == '__main__':
-    js = open('test.js').read()
+        if isinstance(statement, list):
+            self.compile_statements(statement, stream)
+            return
 
-    result = Compiler().compile(js)
+        if isinstance(statement, ast.VariableDeclaration):
+            # TODO: declaring variable affects whole scope, even if declaration is not executed
+            assert isinstance(statement.node, ast.Identifier)
 
-    print result
+            stream.writeline('scope.var(%s,%s)' % (repr(statement.node.name), self.compile_expression(statement.expr)))
+            return
 
-    exec(result)
+        if isinstance(statement, ast.If):
+            expression = self.compile_expression(statement.expr)
 
-    print scope['foo'](scope['foo'], Array())
+            stream.writeline('if %s:' % expression)
+            stream.indent()
+            self.compile_statements(statement.true, stream)
+            stream.dedent()
+
+            if statement.false:
+                stream.writeline('else:')
+                stream.indent()
+                self.compile_statements(statement.false, stream)
+                stream.dedent()
+
+            return
+
+        if isinstance(statement, ast.Assign):
+            stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_expression(statement.expr)))
+            return
+
+        if isinstance(statement, ast.FuncDecl):
+            if statement.node:
+                stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_function(statement)))
+                return
+
+        if isinstance(statement, ast.Return):
+            stream.writeline('return %s' % self.compile_expression(statement.expression))
+            return
+
+        stream.writeline(self.compile_expression(statement))

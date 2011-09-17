@@ -1,5 +1,8 @@
 # Javascript objects
 
+import re
+
+
 class ReferenceError(Exception):
     pass
 
@@ -63,15 +66,14 @@ def typeof(value):
     raise InternalError("Unknown object %r" % value)
 
 
-def new(function, arguments):
-    this = Object(prototype=function['prototype'])
-    function(this, arguments)
+def new(constructor, arguments):
+    constructor['constructor']
+    this = Object(prototype=constructor['constructor'])
+    constructor(this, arguments)
     return this
     
 
 def forinloop(this, scope, item, iterator, statement):
-    scope = Scope(scope)
-
     for value in iterator.enumerate():
         scope.var(item, value)
         
@@ -81,20 +83,10 @@ def forinloop(this, scope, item, iterator, statement):
 
 
 def whileloop(this, scope, condition, statement):
-    scope = Scope(scope)
-
     while condition(scope):
         statement(this, scope)
 
     return undefined
-
-
-def function(this, arguments):
-    raise NotImplementedError('Function is not implemented')
-
-
-def regexp(this, arguments):
-    raise NotImplementedError('RegExp is not implemented')
 
 
 class Base(object):
@@ -143,7 +135,7 @@ class javascript_object(type):
                 properties[key] = dict.pop(key)
 
         dict['properties'] = properties
-
+            
         klass = type.__new__(mcs, name, bases, dict)
 
         klass.__name__ = name
@@ -156,14 +148,28 @@ def javascript(method):
     return method
 
 
+class Constructor(object):
+    def __init__(self, klass, prototype):
+        self.klass = klass
+
+        if isinstance(prototype, Constructor):
+            self.prototype = prototype(klass.properties)
+        else:
+            self.prototype = prototype
+            self.prototype.properties.update(klass.properties)
+
+    def __call__(self, *args, **kwargs):
+        object = self.klass(*args, **kwargs)
+        object.prototype = self.prototype
+        return object
+
+
 class Object(Base):
     __metaclass__ = javascript_object
 
-    def __init__(self, properties={}, parent=False):
-        self.properties = dict(properties)
-
-        if parent:
-            self.prototype = None
+    def __init__(self, properties={}):
+        self.prototype = None
+        self.properties = properties.copy()
 
     @javascript
     def hasOwnProperty(this, arguments): 
@@ -213,9 +219,6 @@ class Object(Base):
         return True
 
 
-Object.prototype = Object(Object.properties, parent=True)
-
-
 class Immutable(Object):
     def __setitem__(self, item, value):
         return value
@@ -225,10 +228,8 @@ class Number(Immutable):
     NaN = object()
 
     def __init__(self, number=0):
-        Object.__init__(self)
-
         self.number = number
-
+        
     def __hash__(self):
         return self.number
 
@@ -260,15 +261,9 @@ class Number(Immutable):
         return repr(self.number)
 
 
-Number.prototype = Object(Number.properties)
-
-
 class Array(Object):
     def __init__(self, value=[]):
-        Object.__init__(self)
-
-        self.items = value
-        
+        self.items = value        
         self['length'] = Number(len(value))
 
     length = Number(0)
@@ -366,38 +361,27 @@ class Array(Object):
         return repr(self.items)
 
 
-Array.prototype = Object(Array.properties)
-
-
 class Boolean(Object):
     def __init__(self, value=False):
-        Object.__init__(self)
-
         self.value = bool(value)
 
     def __repr__(self):
         return repr(self.value)
 
 
-Boolean.prototype = Object(Boolean.properties)
-
-
 class Function(Object):
     def __init__(self, code=None, parameters=[], scope=None, name='function'):
-        Object.__init__(self)
-
         self.name = name
         self.code = code
         self.parameters = parameters
         self.scope = scope or Scope()
 
         self['length'] = Number(len(parameters))
-
         self['prototype'] = Object()
 
     @javascript
     def apply(this, arguments):
-        if not callable(this):
+        if not hasattr(this, '_call'):
             raise TypeError('Function.prototype.apply called on incompatible %r' % this)
 
         context = this
@@ -445,8 +429,6 @@ class Function(Object):
 
 class PythonFunction(Function):
     def __init__(self, callable=None, prototype=None):
-        Object.__init__(self)
-        
         self.callable = getattr(callable, 'new', callable)
 
         if prototype:
@@ -459,19 +441,14 @@ class PythonFunction(Function):
         return self.callable(this, arguments)
 
     def __repr__(self):
-        if self.constructor:
-            return "%s()" % self.constructor.__name__ 
+        if self.callable:
+            return "%s()" % self.callable.__name__ 
 
         return "function()"
 
 
-PythonFunction.prototype = Function.prototype = PythonFunction(prototype=Object(Function.properties))
-
-
 class String(Immutable):
     def __init__(self, s):
-        Object.__init__(self)
-
         self.string = unicode(s)
 
     def __hash__(self):
@@ -496,27 +473,38 @@ class String(Immutable):
         return '"%s"' % self.string
 
 
-String.prototype = Object(String.properties)
+class RegExp(Object):
+    def __init__(self, pattern, flags):
+        self.re = re.compile(unicode(pattern))
 
+    @staticmethod
+    def new(this, arguments):
+        return RegExp(arguments[0], arguments[1])
 
-true = Boolean(True)
-false = Boolean(False)
-NaN = Number(Number.NaN)
+_Object = Constructor(Object, Object(Object.properties))
+_Array = Constructor(Array, _Object)
+_Boolean = Constructor(Boolean, _Object)
+_Number = Constructor(Number, _Object)
+_RegExp = Constructor(RegExp, _Object)
+_String = Constructor(String, _Object)
+_Function = Constructor(Function, Function(_Object()))
 
+true = _Boolean(True)
+false = _Boolean(False)
+NaN = _Number(Number.NaN)
 
-def console_log(this, arguments):
-    print ' '.join(repr(arg) for arg in arguments)
-    return undefined
+def log(this, arguments):
+    print arguments
 
+console = _Object({'log': _Function(log)})
 
 scope = Scope({
-    'Array': PythonFunction(Array),
-    'Boolean': PythonFunction(Boolean),
-    'Function': PythonFunction(PythonFunction),
-    'Number': PythonFunction(Number),
-    'Object': PythonFunction(Object),
-    'String': PythonFunction(String),
-    'console': Object({
-         'log': PythonFunction(console_log),
-    })
+    'Array': _Function(Array.new),
+    'Boolean': _Function(_Boolean),
+    'Function': _Function(_Function),
+    'Number': _Function(_Number),
+    'Object': _Function(_Object),
+    'String': _Function(_String),
+    'RegExp': _Function(_RegExp),
+    'console': console,
 })
