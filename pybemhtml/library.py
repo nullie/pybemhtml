@@ -47,6 +47,22 @@ class Scope(object):
         return repr(self.variables)
 
 
+def forinloop(this, scope, item, iterator, statement):
+    for value in iterator.enumerate():
+        scope.var(item, value)
+        
+        statement(this, scope)
+
+    return undefined
+
+
+def new(objectType, parameters):
+    this = Object()
+    this.prototype = objectType['prototype']
+    objectType(this, parameters)
+    return this
+    
+
 def typeof(value):
     if isinstance(value, Number):
         return String('number')
@@ -64,22 +80,6 @@ def typeof(value):
         return String('undefined')
 
     raise InternalError("Unknown object %r" % value)
-
-
-def new(constructor, arguments):
-    constructor['constructor']
-    this = Object(prototype=constructor['constructor'])
-    constructor(this, arguments)
-    return this
-    
-
-def forinloop(this, scope, item, iterator, statement):
-    for value in iterator.enumerate():
-        scope.var(item, value)
-        
-        statement(this, scope)
-
-    return undefined
 
 
 def whileloop(this, scope, condition, statement):
@@ -104,6 +104,7 @@ class UndefinedType(Base):
         return 'undefined'
 
     def __call__(self, this, arguments):
+        raise TypeError('call to undefined with arguments %r %r' % (this, arguments))
         raise TypeError('undefined is not a function')
 
     def __add__(self, other):
@@ -171,6 +172,9 @@ class Object(Base):
         self.prototype = None
         self.properties = properties.copy()
 
+    def new(this, arguments):
+        return Object()
+
     @javascript
     def hasOwnProperty(this, arguments): 
         prop = arguments[0]
@@ -234,7 +238,19 @@ class Number(Immutable):
         return self.number
 
     def __add__(self, other):
+        if isinstance(other, Number):
+            return Number(self.number + other.number)
+
         return Number(self.number + other)
+
+    def __div__(self, other):
+        return Number(self.number / other.number)
+
+    def __mod__(self, other):
+        return Number(self.number % other.number)
+
+    def __mul__(self, other):
+        return Number(self.number * other.number)
 
     def __sub__(self, other):
         return Number(self.number - other.number)
@@ -292,6 +308,10 @@ class Array(Object):
                 result.append(arg)
 
         return result
+
+    @javascript
+    def join(this, arguments):
+        return arguments[0].string.join(this.items)
 
     @staticmethod
     def new(this, arguments):
@@ -381,7 +401,7 @@ class Function(Object):
 
     @javascript
     def apply(this, arguments):
-        if not hasattr(this, '_call'):
+        if not callable(this):
             raise TypeError('Function.prototype.apply called on incompatible %r' % this)
 
         context = this
@@ -481,30 +501,33 @@ class RegExp(Object):
     def new(this, arguments):
         return RegExp(arguments[0], arguments[1])
 
-_Object = Constructor(Object, Object(Object.properties))
-_Array = Constructor(Array, _Object)
-_Boolean = Constructor(Boolean, _Object)
-_Number = Constructor(Number, _Object)
-_RegExp = Constructor(RegExp, _Object)
-_String = Constructor(String, _Object)
-_Function = Constructor(Function, Function(_Object()))
+Object.prototype = Object(Object.properties)
+Object.prototype.prototype = None
+Array.prototype = Object(Array.properties)
+Boolean.prototype = Object(Boolean.properties)
+Number.prototype = Object(Number.properties)
+RegExp.prototype = Object(RegExp.properties)
+String.prototype = Object(String.properties)
+Function.prototype = Function()
+Function.prototype.properties.update(Function.properties)
+Function.prototype.prototype = None
 
-true = _Boolean(True)
-false = _Boolean(False)
-NaN = _Number(Number.NaN)
+true = Boolean(True)
+false = Boolean(False)
+NaN = Number(Number.NaN)
 
 def log(this, arguments):
     print arguments
 
-console = _Object({'log': _Function(log)})
+console = Object({'log': PythonFunction(log)})
 
 scope = Scope({
-    'Array': _Function(Array.new),
-    'Boolean': _Function(_Boolean),
-    'Function': _Function(_Function),
-    'Number': _Function(_Number),
-    'Object': _Function(_Object),
-    'String': _Function(_String),
-    'RegExp': _Function(_RegExp),
-    'console': console,
+    'Array': PythonFunction(Array.new),
+#    'Boolean': PythonFunction(Boolean.new),
+#    'Function': PythonFunction(Function.new),
+#    'Number': PythonFunction(Number.new),
+    'Object': PythonFunction(Object.new),
+#    'String': PythonFunction(String.new),
+    'RegExp': PythonFunction(RegExp.new),
+#    'console': console,
 })

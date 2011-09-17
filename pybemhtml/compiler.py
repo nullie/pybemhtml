@@ -5,10 +5,7 @@ from pyjsparser import ast
 from pyjsparser.parser import Parser
 
 
-IMPORTS = "_Object, _Array, _Boolean, _Number, _RegExp, _String, _Function, true, false, NaN, undefined, typeof, console, scope"
-
-
-class CompileError(Exception):
+class CompilerError(Exception):
     pass
 
 
@@ -52,7 +49,7 @@ class Compiler(object):
 
         self.stream = Stream()
 
-        self.stream.writeline('from pybemhtml.library import %s' % IMPORTS)
+        self.stream.writeline('from pybemhtml.library import *')
 
         self.compile_statements(program.statements, self.stream, in_function=False)
 
@@ -77,7 +74,7 @@ class Compiler(object):
         elif isinstance(lvalue, ast.PropertyAccessor):
             return ("%s"+ operator) % ((self.compile_expression(lvalue.node), self.compile_expression(lvalue.element)) + args)
         else:
-            raise CompileError("Cannot assign %r" % expr)
+            raise CompilerError("Cannot assign to %r" % lvalue)
 
     def compile_function(self, expr):
         for p in expr.parameters or []:
@@ -92,9 +89,9 @@ class Compiler(object):
         parameters = [repr(p.name) for p in expr.parameters or []]
 
         if name:
-            return "_Function(%s,[%s],scope,%r)" % (self.compile_statements(expr.statements), ','.join(parameters), name)        
+            return "Function(%s,[%s],scope,%r)" % (self.compile_statements(expr.statements), ','.join(parameters), name)        
         else:
-            return "_Function(%s,[%s],scope)" % (name, self.compile_statements(expr.statements), ','.join(parameters))     
+            return "Function(%s,[%s],scope)" % (name, self.compile_statements(expr.statements), ','.join(parameters))     
 
     def compile_expression(self, expr):
         if isinstance(expr, list):
@@ -151,7 +148,7 @@ class Compiler(object):
             else:
                 instance = 'undefined'
 
-            return "%s(%s,_Array([%s]))" % (self.compile_expression(expr.node), instance, ",".join(args))
+            return "%s(%s,Array([%s]))" % (self.compile_expression(expr.node), instance, ",".join(args))
 
         if isinstance(expr, ast.Object):
             properties = []
@@ -170,7 +167,7 @@ class Compiler(object):
                 
                 properties.append("%r:%s" % (key, self.compile_expression(assignment.expr)))
                 
-            return "_Object({%s})" % ",".join(properties)
+            return "Object({%s})" % ",".join(properties)
 
         if isinstance(expr, ast.Boolean):
             if expr.value == 'true':
@@ -192,7 +189,7 @@ class Compiler(object):
             return 'whileloop(this,scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements(expr.statement))
 
         if isinstance(expr, ast.New):
-            return 'new(%s,_Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
+            return 'new(%s,Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
 
         if isinstance(expr, ast.Number):
             return 'Number(%s)' % expr.value
@@ -205,7 +202,7 @@ class Compiler(object):
             return '%s[%r]' % (self.compile_expression(expr.node), expr.element.name)
 
         if isinstance(expr, ast.String):
-            return '_String(%r)' % expr.data[1:-1]
+            return 'String(%r)' % expr.data[1:-1]
 
         if isinstance(expr, ast.Identifier):
             if expr.name == 'undefined':
@@ -214,7 +211,7 @@ class Compiler(object):
             return "scope[%r]" % expr.name
 
         if isinstance(expr, ast.Array):
-            return "_Array([%s])" % ','.join(map(self.compile_expression, expr.items or []))
+            return "Array([%s])" % ','.join(map(self.compile_expression, expr.items or []))
 
         if expr == 'this':
             return "this"
