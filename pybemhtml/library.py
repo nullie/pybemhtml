@@ -46,6 +46,16 @@ class Scope(object):
     def __repr__(self):
         return repr(self.variables)
 
+    def prefixincr(self, item, increment):
+        value = self[item] + increment
+        self[item] = value
+        return value
+
+    def postfixincr(self, item, increment):
+        value = self[item]
+        self[item] = value + increment
+        return value
+
 
 def forinloop(this, scope, item, iterator, statement):
     for value in iterator.enumerate():
@@ -95,6 +105,7 @@ class Base(object):
 
 class UndefinedType(Base):
     def __getitem__(self, item):
+        raise TypeError('undefined has no property %r' % item)
         raise TypeError('undefined has no properties')
 
     def __str__(self):
@@ -149,27 +160,10 @@ def javascript(method):
     return method
 
 
-class Constructor(object):
-    def __init__(self, klass, prototype):
-        self.klass = klass
-
-        if isinstance(prototype, Constructor):
-            self.prototype = prototype(klass.properties)
-        else:
-            self.prototype = prototype
-            self.prototype.properties.update(klass.properties)
-
-    def __call__(self, *args, **kwargs):
-        object = self.klass(*args, **kwargs)
-        object.prototype = self.prototype
-        return object
-
-
 class Object(Base):
     __metaclass__ = javascript_object
 
     def __init__(self, properties={}):
-        self.prototype = None
         self.properties = properties.copy()
 
     def new(this, arguments):
@@ -232,6 +226,7 @@ class Number(Immutable):
     NaN = object()
 
     def __init__(self, number=0):
+        Object.__init__(self)
         self.number = number
         
     def __hash__(self):
@@ -279,6 +274,7 @@ class Number(Immutable):
 
 class Array(Object):
     def __init__(self, value=[]):
+        Object.__init__(self)
         self.items = value        
         self['length'] = Number(len(value))
 
@@ -288,8 +284,10 @@ class Array(Object):
     def push(this, arguments):
         length = this['length']
 
-        for i, item in enumerate(arguments):
-            this[length + i] = item
+        this.items.extend(arguments)
+
+        #for i, item in enumerate(arguments):
+        #    this[length + i] = item
 
         length = length + len(arguments)
 
@@ -383,7 +381,17 @@ class Array(Object):
 
 class Boolean(Object):
     def __init__(self, value=False):
+        Object.__init__(self)
         self.value = bool(value)
+
+    def __not__(self):
+        return Boolean(not self.value)
+
+    def __nonzero__(self):
+        return self.value
+
+    def __eq__(self, other):
+        return self.value == other.value
 
     def __repr__(self):
         return repr(self.value)
@@ -391,6 +399,8 @@ class Boolean(Object):
 
 class Function(Object):
     def __init__(self, code=None, parameters=[], scope=None, name='function'):
+        Object.__init__(self)
+
         self.name = name
         self.code = code
         self.parameters = parameters
@@ -448,27 +458,24 @@ class Function(Object):
 
 
 class PythonFunction(Function):
-    def __init__(self, callable=None, prototype=None):
-        self.callable = getattr(callable, 'new', callable)
-
-        if prototype:
-            self.prototype = prototype
+    def __init__(self, callable=None):
+        Object.__init__(self)
 
         if callable:
             self['prototype'] = getattr(callable, 'prototype', Object())
-    
+            self.name = callable.__name__
+        else:
+            self.name = 'function'
+        
+        self.callable = getattr(callable, 'new', callable)
+
     def __call__(self, this, arguments):
         return self.callable(this, arguments)
-
-    def __repr__(self):
-        if self.callable:
-            return "%s()" % self.callable.__name__ 
-
-        return "function()"
 
 
 class String(Immutable):
     def __init__(self, s):
+        Object.__init__(self)
         self.string = unicode(s)
 
     def __hash__(self):
@@ -490,11 +497,12 @@ class String(Immutable):
         return self.string
 
     def __repr__(self):
-        return '"%s"' % self.string
+        return repr(self.string)
 
 
 class RegExp(Object):
     def __init__(self, pattern, flags):
+        Object.__init__(self)
         self.re = re.compile(unicode(pattern))
 
     @staticmethod
@@ -517,17 +525,19 @@ false = Boolean(False)
 NaN = Number(Number.NaN)
 
 def log(this, arguments):
-    print arguments
+    import logging
+    logging.getLogger().debug(arguments)
 
 console = Object({'log': PythonFunction(log)})
 
+
 scope = Scope({
-    'Array': PythonFunction(Array.new),
-#    'Boolean': PythonFunction(Boolean.new),
-#    'Function': PythonFunction(Function.new),
-#    'Number': PythonFunction(Number.new),
-    'Object': PythonFunction(Object.new),
-#    'String': PythonFunction(String.new),
-    'RegExp': PythonFunction(RegExp.new),
-#    'console': console,
+    'Array': PythonFunction(Array),
+    'Boolean': PythonFunction(Boolean),
+    'Function': PythonFunction(Function),
+    'Number': PythonFunction(Number),
+    'Object': PythonFunction(Object),
+    'String': PythonFunction(String),
+    'RegExp': PythonFunction(RegExp),
+    'console': console,
 })

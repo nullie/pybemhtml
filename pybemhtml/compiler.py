@@ -47,9 +47,12 @@ class Compiler(object):
 
         assert isinstance(program, ast.Program)
 
-        self.stream = Stream()
+        preamble = Stream()
 
-        self.stream.writeline('from pybemhtml.library import *')
+        preamble.writeline('# -*- coding: utf-8 -*-')
+        preamble.writeline('from pybemhtml.library import *')
+
+        self.stream = Stream()
 
         self.compile_statements(program.statements, self.stream, in_function=False)
 
@@ -58,7 +61,7 @@ class Compiler(object):
 
         self.functions.append(self.stream)
 
-        return "".join(f.source for f in self.functions)
+        return "".join(f.source for f in [preamble] + self.functions)
 
     def generate_name(self):
         name = 'f%s' % self.name_counter
@@ -183,10 +186,10 @@ class Compiler(object):
         if isinstance(expr, ast.ForIn):
             assert isinstance(expr.item, ast.Identifier)
             
-            return 'forinloop(this,scope,%r,%s,%s)' % (expr.item.name, self.compile_expression(expr.iterator), self.compile_statements(expr.statement))
+            return 'forinloop(this,scope,%r,%s,%s)' % (expr.item.name, self.compile_expression(expr.iterator), self.compile_statements([expr.statement]))
 
         if isinstance(expr, ast.While):
-            return 'whileloop(this,scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements(expr.statement))
+            return 'whileloop(this,scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements([expr.statement]))
 
         if isinstance(expr, ast.New):
             return 'new(%s,Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
@@ -234,6 +237,8 @@ class Compiler(object):
         if statements is None:
             return name
 
+        assert isinstance(statements, list)
+
         for statement in statements:
             self.compile_statement(statement, stream)
 
@@ -258,14 +263,15 @@ class Compiler(object):
             expression = self.compile_expression(statement.expr)
 
             stream.writeline('if %s:' % expression)
+
             stream.indent()
-            self.compile_statements(statement.true, stream)
+            self.compile_statement(statement.true, stream)
             stream.dedent()
 
             if statement.false:
                 stream.writeline('else:')
                 stream.indent()
-                self.compile_statements(statement.false, stream)
+                self.compile_statement(statement.false, stream)
                 stream.dedent()
 
             return
