@@ -276,9 +276,15 @@ class Compiler(object):
             text = match.group(1)
 
             if text[0] == 'u':
-                text = unichr(int(text[1:], 16))
-            
-            return text
+                return unichr(int(text[1:], 16))
+
+            if text[0] == 'n':
+                return '\n'
+
+            if text[0] in ["'", '"', '\\']:
+                return text
+
+            raise CompilerError("Unknown escaped character \\%s" % text)
 
         return repr(self.UNESCAPE.sub(replacement, string.data[1:-1]))
 
