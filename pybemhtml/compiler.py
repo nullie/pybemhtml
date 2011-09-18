@@ -178,9 +178,9 @@ class Compiler(object):
             # Javascript coercion to string
             if operator == '+':
                 if isinstance(expr.left, ast.String):
-                    return '%r + unicode(%s)' % (expr.left.data[1:-1], self.compile_expression(expr.right))
+                    return '%s + unicode(%s)' % (self.compile_string(expr.left), self.compile_expression(expr.right))
                 if isinstance(expr.right, ast.String):
-                    return 'unicode(%s) + %r' % (self.compile_expression(expr.left), expr.right.data[1:-1])
+                    return 'unicode(%s) + %s' % (self.compile_expression(expr.left), self.compile_string(expr.right))
 
             return "(%s %s %s)" % (self.compile_expression(expr.left), operator, self.compile_expression(expr.right))
 
@@ -249,7 +249,7 @@ class Compiler(object):
             return 'getproperty(%s,%r)' % (self.compile_expression(expr.node), expr.element.name)
 
         if isinstance(expr, ast.String):
-            return '%r' % expr.data[1:-1]
+            return self.compile_string(expr)
 
         if isinstance(expr, ast.Identifier):
             if expr.name == 'undefined':
@@ -267,6 +267,20 @@ class Compiler(object):
             return 'undefined'
 
         raise Exception("Unexpected node %r" % expr)
+
+    UNESCAPE = re.compile(r'\\(u[0-9a-f]{4}|.)', re.U)
+
+    def compile_string(self, string):
+        # Unescaping and then escaping to be safe
+        def replacement(match):
+            text = match.group(1)
+
+            if text[0] == 'u':
+                text = unichr(int(text[1:], 16))
+            
+            return text
+
+        return repr(self.UNESCAPE.sub(replacement, string.data[1:-1]))
 
     def compile_statements(self, statements, stream=None, in_function=True):
         if not stream:

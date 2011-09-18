@@ -151,8 +151,12 @@ def forinloop(this, scope, item, iterator, statement):
 
 
 def new(objectType, parameters):
+    if getattr(objectType, 'constructor'):
+        return objectType(None, parameters)
+
     this = Object()
     this.prototype = objectType['prototype']
+
     objectType(this, parameters)
     return this
 
@@ -552,7 +556,9 @@ class PythonFunction(Function):
             self.name = callable.__name__
         else:
             self.name = 'function'
-        
+
+        self.constructor = hasattr(callable, 'new')
+
         self.callable = getattr(callable, 'new', callable)
 
     def __call__(self, this, arguments):
@@ -571,21 +577,47 @@ class String(Object):
         pattern = arguments[0]
         replacement = arguments[1]
 
-        return "replace %r with %r" % (pattern, replacement)
-    
+        if isinstance(replacement, Function):
+            def replacement_function(match):
+                arguments = [match.group()] + list(match.groups()) + [match.start(), this]
+                return replacement(undefined, arguments)
+
+        if isinstance(pattern, RegExp):
+            return pattern.replace(this, replacement_function or replacement)
+
+        raise InternalError('unsupported object for pattern %r' % pattern)
+   
     @javascript
     def substring(this, arguments):
         return this[arguments[0]:arguments[1]]
 
 
 class RegExp(Object):
+    FLAGS = re.compile("[gi]*")
+    
     def __init__(self, pattern, flags):
         Object.__init__(self)
-        self.re = re.compile(unicode(pattern))
+        
+        re_flags = 0
+
+        if not self.FLAGS.match(flags):
+            raise InternalError('unsupported flags %s' % flags)
+
+        if 'i' in flags:
+            re_flags |= re.I
+
+        self.all = 'g' in flags
+
+        self.re = re.compile(unicode(pattern), re_flags)
 
     @staticmethod
     def new(this, arguments):
         return RegExp(arguments[0], arguments[1])
+
+    def replace(self, string, replacement):
+        count = 0 if self.all else 1
+
+        return self.re.sub(replacement, string, count)
 
     def __repr__(self):
         return "RegExp"
