@@ -1,0 +1,2 @@
+Pybemhtml is a compiler of a subset of Javascript into Python code.
+It aims to support enough of Javascript to run compiled xjst templates (https://github.com/veged/xjst).
