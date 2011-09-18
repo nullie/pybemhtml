@@ -11,6 +11,10 @@ class InternalError(Exception):
     pass
 
 
+class RangeError(Exception):
+    pass
+
+
 class Scope(object):
     def __init__(self, parent=None):
         self.variables = {}
@@ -295,7 +299,7 @@ class Object(Base):
 class Number(Object):
     NaN = object()
 
-    def __init__(self, number=0):
+    def __init__(self, number):
         Object.__init__(self)
         self.number = number
         
@@ -304,6 +308,12 @@ class Number(Object):
             return 'NaN'
 
         return repr(self.number)
+
+    def __add__(self, other):
+        return NaN
+
+    def __sub__(self, other):
+        return NaN
 
 
 class Array(Object):
@@ -335,6 +345,7 @@ class Array(Object):
     def push(this, arguments):
         if isinstance(this, list):
             this.extend(arguments)
+            return len(this)
 
         raise InternalError('Push is not implemented for %r' % this)
             
@@ -369,6 +380,9 @@ class Array(Object):
 
     @classmethod
     def getproperty(cls, this, property):
+        if property == 'length':
+            return len(this)
+
         index = cls.coerceindex(property)
 
         if index is not None:
@@ -386,6 +400,17 @@ class Array(Object):
 
     @classmethod
     def setproperty(cls, this, property, value):
+        if property == 'length':
+            length = cls.coerceindex(value)
+            if length is None:
+                raise RangeError("invalid array length")
+            if length < len(this):
+                this[:] = this[:length]
+            if length > len(this):
+                this.extend([undefined] * (length - len(this)))
+
+            return length
+
         index = cls.coerceindex(property)
 
         if index is not None:
@@ -483,8 +508,7 @@ class PythonFunction(Function):
 
     @classmethod
     def getproperty(cls, this, property):
-        if property in cls.prototype:
-            return cls.prototype[property]
+        return cls.prototype[property]
 
         raise InternalError()
 

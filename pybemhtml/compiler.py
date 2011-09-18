@@ -71,11 +71,17 @@ class Compiler(object):
     def optimize_expression(self, expr):
         pass
 
-    def compile_assignment(self, lvalue, operator, *args):
+    def compile_assignment(self, lvalue, *args):
         if isinstance(lvalue, ast.Identifier):
-            return ("scope" + operator) % ((repr(lvalue.name),) + args)
+            return ("scope.__setitem__(%s, %s)") % ((repr(lvalue.name),) + args)
         elif isinstance(lvalue, ast.PropertyAccessor):
-            return "setproperty(%s, %s, %s)" % ((self.compile_expression(lvalue.node), self.compile_expression(lvalue.element)) + args)
+            node = self.compile_expression(lvalue.node)
+            if isinstance(lvalue, ast.BracketAccessor):
+                element = self.compile_expression(lvalue.element)
+            elif isinstance(lvalue, ast.DotAccessor):
+                assert isinstance(lvalue.element, ast.Identifier)
+                element = repr(lvalue.element.name)
+            return "setproperty(%s, %s, %s)" % ((node, element) + args)
         else:
             raise CompilerError("Cannot assign to %r" % lvalue)
 
@@ -119,7 +125,7 @@ class Compiler(object):
             compiled = self.compile_function(expr)
             
             if expr.node:
-                return self.compile_assignment(expr.node, '.__setitem__(%s,%s)', compiled)
+                return self.compile_assignment(expr.node, compiled)
 
             return compiled
                 
@@ -129,7 +135,7 @@ class Compiler(object):
             if operator == '!':
                 operator = 'not'
 
-            if operator in '--':
+            if operator == '--':
                 return self.compile_update(expr.value, "decr", postfix=expr.postfix)
 
             if operator == '++':
@@ -155,7 +161,7 @@ class Compiler(object):
             return "(%s %s %s)" % (self.compile_expression(expr.left), operator, self.compile_expression(expr.right))
 
         if isinstance(expr, ast.Assign):
-            return self.compile_assignment(expr.node, '.__setitem__(%s, %s)', self.compile_expression(expr.expr))
+            return self.compile_assignment(expr.node, self.compile_expression(expr.expr))
 
         if isinstance(expr, ast.FuncCall):
             args = map(self.compile_expression, expr.arguments or [])
@@ -291,12 +297,12 @@ class Compiler(object):
             return
 
         if isinstance(statement, ast.Assign):
-            stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_expression(statement.expr)))
+            stream.writeline(self.compile_assignment(statement.node, self.compile_expression(statement.expr)))
             return
 
         if isinstance(statement, ast.FuncDecl):
             if statement.node:
-                stream.writeline(self.compile_assignment(statement.node, "[%s]=%s", self.compile_function(statement)))
+                stream.writeline(self.compile_assignment(statement.node, self.compile_function(statement)))
                 return
 
         if isinstance(statement, ast.Return):
