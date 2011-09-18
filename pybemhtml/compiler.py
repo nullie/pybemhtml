@@ -141,7 +141,7 @@ class Compiler(object):
             if operator == '++':
                 return self.compile_update(expr.value, "incr", postfix=expr.postfix)
 
-            return "%s(%s)" % (operator, self.compile_expression(expr.value))
+            return "(%s(%s))" % (operator, self.compile_expression(expr.value))
 
         if isinstance(expr, ast.BinOp):
             operator = expr.operator

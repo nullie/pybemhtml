@@ -65,7 +65,7 @@ def getproperty(object, property):
     if isinstance(object, dict):
         return Object.getproperty(object, property)
 
-    if isinstance(object, str):
+    if isinstance(object, unicode):
         return Object.getproperty(String.prototype, property)
 
     if isinstance(object, list):
@@ -115,8 +115,24 @@ def decr(value):
     return value - 1
 
 
+def enumerate_properties(object):
+    if isinstance(object, dict):
+        return Object.enumerate(object)
+
+    if isinstance(object, list):
+        return Array.enumerate(object)
+
+    if isinstance(object, basestring):
+        return Object.enumerate(String.prototype)
+
+    if isinstance(object, Object):
+        return object.enumerate(object)
+
+    raise InternalError("Don't know how to enumerater %r" % object)
+
+
 def forinloop(this, scope, item, iterator, statement):
-    for value in iterator.enumerate():
+    for value in enumerate_properties(iterator):
         scope.var(item, value)
         
         statement(this, scope)
@@ -138,7 +154,7 @@ def typeof(value):
     if isinstance(value, float):
         return 'number'
 
-    if isinstance(value, str):
+    if isinstance(value, basestring):
         return 'string'
 
     if isinstance(value, list):
@@ -171,9 +187,6 @@ class Base(object):
 
 
 class UndefinedType(Base):
-    def get(self, item, default):
-        raise TypeError('undefined has no property %r' % item)
-        
     def __getitem__(self, item):
         raise TypeError('undefined has no property %r' % item)
         raise TypeError('undefined has no properties')
@@ -194,6 +207,13 @@ class UndefinedType(Base):
         
         if isinstance(other, basestring):
             return 'undefined' + other
+
+    def __radd__(self, other):
+        if isinstance(other, int) or isinstance(other, float):
+            return NaN
+        
+        if isinstance(other, basestring):
+            return other + 'undefined'
 
     def __sub__(self, other):
         if isinstance(other, int) or isinstance(other, float):
@@ -218,7 +238,8 @@ class javascript_object(type):
 
         for key, value in dict.items():
             if isinstance(value, Base) or hasattr(value, 'js'):
-                properties[key] = dict.pop(key)
+                name = getattr(value, 'name', key)
+                properties[name] = dict.pop(key)
 
         dict['properties'] = properties
             
@@ -252,8 +273,11 @@ class Object(Base):
     def new(this, arguments):
         return dict()
 
-    def enumerate(self):
-        return self.properties.keys()
+    @classmethod
+    def enumerate(cls, this):
+        enumerable = this.keys()
+
+        return sorted(enumerable)
 
     @javascript
     def hasOwnProperty(this, arguments): 
@@ -263,6 +287,15 @@ class Object(Base):
 
     @javascript
     def toString(this, arguments):
+        if isinstance(this, dict):
+            return '[object Object]';
+
+        if isinstance(this, list):
+            return '[object Array]'
+
+        if isinstance(this, basestring):
+            return '[object String]'
+
         return '[object %s]' % this.__class__.__name__
 
     def __getitem__(self, property):
@@ -294,6 +327,10 @@ class Object(Base):
     def setproperty(cls, this, property, value):
         this[unicode(property)] = value
         return value
+
+    
+    def __repr__(self):
+        return 'Object { %s }' % ", ".join("%s=%s" % item for item in self.properties.items())
 
 
 class Number(Object):
@@ -514,7 +551,12 @@ class PythonFunction(Function):
 
 
 class String(Object):
-    pass
+    @javascript
+    def replace(this, arguments):
+        pattern = arguments[0]
+        replacement = arguments[1]
+
+        return "replace %r with %r" % (pattern, replacement)
 
 
 class RegExp(Object):
@@ -525,6 +567,9 @@ class RegExp(Object):
     @staticmethod
     def new(this, arguments):
         return RegExp(arguments[0], arguments[1])
+
+    def __repr__(self):
+        return "RegExp"
 
 
 Object.prototype = Object.properties
@@ -541,7 +586,7 @@ NaN = Number(Number.NaN)
 
 def log(this, arguments):
     import logging
-    logging.getLogger().debug(arguments)
+    logging.getLogger().debug(" ".join(repr(arg) for arg in arguments))
 
 console = {'log': PythonFunction(log)}
 
