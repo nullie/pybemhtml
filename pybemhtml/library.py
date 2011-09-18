@@ -1,6 +1,8 @@
 # Javascript objects
 
+import random
 import re
+import simplejson
 
 
 class ReferenceError(Exception):
@@ -115,6 +117,14 @@ def decr(value):
     return value - 1
 
 
+def deleteproperty(object, property):
+    if isinstance(object, dict):
+        del object[property]
+        return True
+
+    raise InternalError("Don't know how to delete properties of %r" % object)
+
+
 def enumerate_properties(object):
     if isinstance(object, dict):
         return Object.enumerate(object)
@@ -128,7 +138,7 @@ def enumerate_properties(object):
     if isinstance(object, Object):
         return object.enumerate(object)
 
-    raise InternalError("Don't know how to enumerater %r" % object)
+    raise InternalError("Don't know how to enumerate %r" % object)
 
 
 def forinloop(this, scope, item, iterator, statement):
@@ -388,7 +398,12 @@ class Array(Object):
             
     @javascript
     def join(this, arguments):
-        return arguments[0].join(this)
+        return arguments[0].join(unicode(arg) for arg in this)
+
+    @javascript
+    def unshift(this, arguments):
+        this[0:0] = arguments
+        return len(this)
 
     @classmethod
     def coerceindex(cls, property):
@@ -557,6 +572,10 @@ class String(Object):
         replacement = arguments[1]
 
         return "replace %r with %r" % (pattern, replacement)
+    
+    @javascript
+    def substring(this, arguments):
+        return this[arguments[0]:arguments[1]]
 
 
 class RegExp(Object):
@@ -570,6 +589,18 @@ class RegExp(Object):
 
     def __repr__(self):
         return "RegExp"
+
+
+class Math(Object):
+    @javascript
+    def random(this, arguments):
+        return random.random()
+
+
+class JSON(Object):
+    @javascript
+    def stringify(this, arguments):
+        return simplejson.dumps(arguments[0])
 
 
 Object.prototype = Object.properties
@@ -598,5 +629,7 @@ scope = Scope({
     'Object': PythonFunction(Object),
     'String': PythonFunction(String),
     'RegExp': PythonFunction(RegExp),
+    'Math': Math.properties,
+    'JSON': JSON.properties,
     'console': console,
 })

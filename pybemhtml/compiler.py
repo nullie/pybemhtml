@@ -99,6 +99,20 @@ class Compiler(object):
         else:
             raise CompilerError("Cannot assign to %r" % lvalue)
 
+    def compile_delete(self, object):
+        if isinstance(object, ast.Identifier):
+            return "scope.delete(%r)" % object.name
+        elif isinstance(object, ast.PropertyAccessor):
+            node = self.compile_expression(object.node)
+            if isinstance(object, ast.BracketAccessor):
+                element = self.compile_expression(object.element)
+            elif isinstance(object, ast.DotAccessor):
+                assert isinstance(object.element, ast.Identifier)
+                element = repr(object.element.name)
+            return "deleteproperty(%s, %s)" % (node, element)
+        else:
+            raise CompilerError("Cannot delete %r" % object)
+
     def compile_function(self, expr):
         for p in expr.parameters or []:
             assert isinstance(p, ast.Identifier)
@@ -141,6 +155,9 @@ class Compiler(object):
             if operator == '++':
                 return self.compile_update(expr.value, "incr", postfix=expr.postfix)
 
+            if operator == 'delete':
+                return self.compile_delete(expr.value)
+
             return "(%s(%s))" % (operator, self.compile_expression(expr.value))
 
         if isinstance(expr, ast.BinOp):
@@ -157,6 +174,13 @@ class Compiler(object):
 
             if operator == '||':
                 operator = 'or'
+
+            # Javascript coercion to string
+            if operator == '+':
+                if isinstance(expr.left, ast.String):
+                    return '%r + unicode(%s)' % (expr.left.data[1:-1], self.compile_expression(expr.right))
+                if isinstance(expr.right, ast.String):
+                    return 'unicode(%s) + %r' % (self.compile_expression(expr.left), expr.right.data[1:-1])
 
             return "(%s %s %s)" % (self.compile_expression(expr.left), operator, self.compile_expression(expr.right))
 
