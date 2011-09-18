@@ -13,11 +13,11 @@ def test_library():
     codecs.open(os.path.join(basedir, 'tmp', 'test_library_js.py'), 'w', encoding='utf-8').write(python)
 
     from tmp.test_library_js import scope
-    from pybemhtml.library import undefined, Array, PythonFunction
+    from pybemhtml.library import undefined, PythonFunction
 
     def _assert(this, arguments):
         assert(arguments[0])
 
     scope['assert'] = PythonFunction(_assert)
 
-    scope['tests'](undefined, Array())
+    scope['tests'](undefined, [])

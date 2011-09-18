@@ -75,7 +75,21 @@ class Compiler(object):
         if isinstance(lvalue, ast.Identifier):
             return ("scope" + operator) % ((repr(lvalue.name),) + args)
         elif isinstance(lvalue, ast.PropertyAccessor):
-            return ("%s"+ operator) % ((self.compile_expression(lvalue.node), self.compile_expression(lvalue.element)) + args)
+            return "setproperty(%s, %s, %s)" % ((self.compile_expression(lvalue.node), self.compile_expression(lvalue.element)) + args)
+        else:
+            raise CompilerError("Cannot assign to %r" % lvalue)
+
+    def compile_update(self, lvalue, function, postfix, *args):
+        if isinstance(lvalue, ast.Identifier):
+            return "scope.update(%s, %s, postfix=%s)" % (repr(lvalue.name), function, 'True' if postfix else 'False')
+        elif isinstance(lvalue, ast.PropertyAccessor):
+            node = self.compile_expression(lvalue.node)
+            if isinstance(lvalue, ast.BracketAccessor):
+                element = self.compile_expression(lvalue.element)
+            elif isinstance(lvalue, ast.DotAccessor):
+                assert isinstance(lvalue.element, ast.Identifier)
+                element = repr(lvalue.element.name)
+            return "updateproperty(%s, %s, %s, postfix=%s)" % (node, element, function, 'True' if postfix else 'False')
         else:
             raise CompilerError("Cannot assign to %r" % lvalue)
 
@@ -115,11 +129,11 @@ class Compiler(object):
             if operator == '!':
                 operator = 'not'
 
-            if operator == '--':
-                return self.compile_assignment(expr.value, ".postfixincr(%s,-1)" if expr.postfix else '.prefixincr(%s,-1)')
+            if operator in '--':
+                return self.compile_update(expr.value, "decr", postfix=expr.postfix)
 
             if operator == '++':
-                return self.compile_assignment(expr.value, ".postfixincr(%s,1)" if expr.postfix else '.prefixincr(%s,1)')
+                return self.compile_update(expr.value, "incr", postfix=expr.postfix)
 
             return "%s(%s)" % (operator, self.compile_expression(expr.value))
 
@@ -151,7 +165,7 @@ class Compiler(object):
             else:
                 instance = 'undefined'
 
-            return "%s(%s,Array([%s]))" % (self.compile_expression(expr.node), instance, ",".join(args))
+            return "%s(%s,[%s])" % (self.compile_expression(expr.node), instance, ",".join(args))
 
         if isinstance(expr, ast.Object):
             properties = []
@@ -170,13 +184,13 @@ class Compiler(object):
                 
                 properties.append("%r:%s" % (key, self.compile_expression(assignment.expr)))
                 
-            return "Object({%s})" % ",".join(properties)
+            return "{%s}" % ",".join(properties)
 
         if isinstance(expr, ast.Boolean):
             if expr.value == 'true':
-                return 'true'
+                return 'True'
             elif expr.value == 'false':
-                return 'false'
+                return 'False'
             else:
                 assert False
 
@@ -192,20 +206,20 @@ class Compiler(object):
             return 'whileloop(this,scope,lambda scope:%s,%s)' % (self.compile_expression(expr.condition), self.compile_statements([expr.statement]))
 
         if isinstance(expr, ast.New):
-            return 'new(%s,Array([%s]))' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
+            return 'new(%s,[%s])' % (self.compile_expression(expr.identifier), ','.join(self.compile_expression(arg) for arg in expr.arguments))
 
         if isinstance(expr, ast.Number):
-            return 'Number(%s)' % expr.value
+            return '%s' % expr.value
 
         if isinstance(expr, ast.BracketAccessor):
-            return '%s[%s]' % (self.compile_expression(expr.node), self.compile_expression(expr.element))
+            return 'getproperty(%s,%s)' % (self.compile_expression(expr.node), self.compile_expression(expr.element))
 
         if isinstance(expr, ast.DotAccessor):
             assert isinstance(expr.element, ast.Identifier)
-            return '%s[%r]' % (self.compile_expression(expr.node), expr.element.name)
+            return 'getproperty(%s,%r)' % (self.compile_expression(expr.node), expr.element.name)
 
         if isinstance(expr, ast.String):
-            return 'String(%r)' % expr.data[1:-1]
+            return '%r' % expr.data[1:-1]
 
         if isinstance(expr, ast.Identifier):
             if expr.name == 'undefined':
@@ -214,7 +228,7 @@ class Compiler(object):
             return "scope[%r]" % expr.name
 
         if isinstance(expr, ast.Array):
-            return "Array([%s])" % ','.join(map(self.compile_expression, expr.items or []))
+            return "[%s]" % ','.join(map(self.compile_expression, expr.items or []))
 
         if expr == 'this':
             return "this"

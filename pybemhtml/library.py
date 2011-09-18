@@ -18,8 +18,8 @@ class Scope(object):
         super(Scope, self).__init__()
 
     def __getitem__(self, item):
-        if item == 'undefined':
-            return undefined
+#        if item == 'undefined':
+#            return undefined
 
         try:
             return self.variables[item]
@@ -46,15 +46,69 @@ class Scope(object):
     def __repr__(self):
         return repr(self.variables)
 
-    def prefixincr(self, item, increment):
-        value = self[item] + increment
-        self[item] = value
+    def update(self, item, function, postfix, *args):
+        value = self[item]
+        newvalue = function(value)
+        self[item] = newvalue
+
+        if postfix:
+            return value
+
+        return newvalue
+
+
+def getproperty(object, property):
+    if isinstance(object, dict):
+        return Object.getproperty(object, property)
+
+    if isinstance(object, str):
+        return Object.getproperty(String.prototype, property)
+
+    if isinstance(object, list):
+        return Array.getproperty(object, property)
+
+    if isinstance(object, Object):
+        return object[property]
+
+    if hasattr(object, '__call__'):
+        return PythonFunction.getproperty(object, property)
+
+    raise InternalError('Unknown object type %r', object)
+
+
+def setproperty(object, property, value):
+    if isinstance(object, dict):
+        object[property] = value
         return value
 
-    def postfixincr(self, item, increment):
-        value = self[item]
-        self[item] = value + increment
+    if isinstance(object, list):
+        Array.setproperty(object, property, value)
         return value
+
+    if isinstance(object, Object):
+        object[property] = value
+        return value
+    
+    raise InternalError('Unknown object type %r', object)
+
+
+def updateproperty(object, property, function, postfix, *args):
+    value = getproperty(object, property)
+    newvalue = function(value)
+    setproperty(object, property, newvalue)
+
+    if postfix:
+        return value
+
+    return newvalue
+
+
+def incr(value):
+    return value + 1
+
+
+def decr(value):
+    return value - 1
 
 
 def forinloop(this, scope, item, iterator, statement):
@@ -71,23 +125,32 @@ def new(objectType, parameters):
     this.prototype = objectType['prototype']
     objectType(this, parameters)
     return this
-    
+
 
 def typeof(value):
-    if isinstance(value, Number):
-        return String('number')
+    if isinstance(value, int):
+        return 'number'
 
-    if isinstance(value, String):
-        return String('string')
+    if isinstance(value, float):
+        return 'number'
 
-    if isinstance(value, Function):
-        return String('function')
+    if isinstance(value, str):
+        return 'string'
 
-    if isinstance(value, Object):
-        return String('object')
+    if isinstance(value, list):
+        return 'object'
+
+    if isinstance(value, Function) or hasattr(value, '__call__'):
+        return 'function'
+
+    if isinstance(value, dict):
+        return 'object'
 
     if value is undefined:
-        return String('undefined')
+        return 'undefined'
+
+    if value is True or value is False:
+        return 'boolean'
 
     raise InternalError("Unknown object %r" % value)
 
@@ -104,6 +167,9 @@ class Base(object):
 
 
 class UndefinedType(Base):
+    def get(self, item, default):
+        raise TypeError('undefined has no property %r' % item)
+        
     def __getitem__(self, item):
         raise TypeError('undefined has no property %r' % item)
         raise TypeError('undefined has no properties')
@@ -119,11 +185,15 @@ class UndefinedType(Base):
         raise TypeError('undefined is not a function')
 
     def __add__(self, other):
-        if isinstance(other, int):
-            return Number(Number.NaN)
+        if isinstance(other, int) or isinstance(other, float):
+            return NaN
         
-        if isinstance(other, String):
-            return String('undefined' + other.string)
+        if isinstance(other, basestring):
+            return 'undefined' + other
+
+    def __sub__(self, other):
+        if isinstance(other, int) or isinstance(other, float):
+            return NaN
 
     def __eq__(self, other):
         return False
@@ -164,107 +234,71 @@ class Object(Base):
     __metaclass__ = javascript_object
 
     def __init__(self, properties={}):
-        self.properties = properties.copy()
+        self.properties = {}
 
+        self.update(properties)
+
+    def update(self, properties):
+        for property, value in properties.items():
+            if hasattr(value, '__call__') and not isinstance(value, Function):
+                value = PythonFunction(value)
+
+            self.properties[property] = value
+                
     def new(this, arguments):
-        return Object()
+        return dict()
+
+    def enumerate(self):
+        return self.properties.keys()
 
     @javascript
     def hasOwnProperty(this, arguments): 
         prop = arguments[0]
 
-        return prop in this.properties
+        return prop in this
 
     @javascript
     def toString(this, arguments):
-        return String('[object %s]' % this.__class__.__name__)
+        return '[object %s]' % this.__class__.__name__
 
-    def __getitem__(self, item):
+    def __getitem__(self, property):
         try:
-            return self.properties[unicode(item)]
+            return self.properties[unicode(property)]
         except KeyError:
-            pass
-
-        if self.prototype:
-            try:
-                return self.prototype[item]
-            except KeyError:
-                pass
+            if self.prototype:
+                return self.prototype[property]
 
         return undefined
 
-    def __setitem__(self, item, value):
-        self.properties[unicode(item)] = value
+    def __setitem__(self, property, value):
+        self.properties[property] = value
         return value
 
-    def prefixincr(self, item, increment):
-        value = self[item] + increment
-        self[item] = value
-        return value
+    @classmethod
+    def getproperty(cls, this, property):
+        try:
+            return this[unicode(property)]
+        except KeyError:
+            pass
 
-    def postfixincr(self, item, increment):
-        value = self[item]
-        self[item] = value + increment
-        return value
+        if this is cls.prototype:
+            return undefined
 
-    def __eq__(self, other):
-        return False
+        return getproperty(cls.prototype, property)
 
-    def __repr__(self):
-        return repr(self.properties)
-
-    def __nonzero__(self):
-        return True
-
-
-class Immutable(Object):
-    def __setitem__(self, item, value):
+    @classmethod
+    def setproperty(cls, this, property, value):
+        this[unicode(property)] = value
         return value
 
 
-class Number(Immutable):
+class Number(Object):
     NaN = object()
 
     def __init__(self, number=0):
         Object.__init__(self)
         self.number = number
         
-    def __hash__(self):
-        return self.number
-
-    def __add__(self, other):
-        if isinstance(other, Number):
-            return Number(self.number + other.number)
-
-        return Number(self.number + other)
-
-    def __div__(self, other):
-        return Number(self.number / other.number)
-
-    def __mod__(self, other):
-        return Number(self.number % other.number)
-
-    def __mul__(self, other):
-        return Number(self.number * other.number)
-
-    def __sub__(self, other):
-        return Number(self.number - other.number)
-
-    def __eq__(self, other):
-        if isinstance(other, Number):
-            return self.number == other.number
-
-        return self.number == other.number
-    
-    def __cmp__(self, other):
-        if isinstance(other, Number):
-            return cmp(self.number, other.number)
-
-        return cmp(self.number, other)
-
-    def __neg__(self):
-        return Number(-self.number)
-
     def __repr__(self):
         if self.number is self.NaN:
             return 'NaN'
@@ -273,128 +307,100 @@ class Number(Immutable):
 
 
 class Array(Object):
-    def __init__(self, value=[]):
-        Object.__init__(self)
-        self.items = value        
-        self['length'] = Number(len(value))
+    extraproperties = {}
 
-    length = Number(0)
-
-    @javascript
-    def push(this, arguments):
-        length = this['length']
-
-        this.items.extend(arguments)
-
-        #for i, item in enumerate(arguments):
-        #    this[length + i] = item
-
-        length = length + len(arguments)
-
-        this['length'] = length
-
-        return length
-
-    @javascript
-    def concat(this, arguments):
-        result = this.items[:]
-
-        for arg in arguments:
-            if isinstance(arg, Array):
-                result.extend(arg)
-            else:
-                result.append(arg)
-
-        return result
-
-    @javascript
-    def join(this, arguments):
-        return arguments[0].string.join(this.items)
+    def __new__(cls, *args, **kwargs):
+        raise InternalError("Array object should not be instantiated")
 
     @staticmethod
     def new(this, arguments):
-        if len(arguments) == 1 and isinstance(arguments[0], Number):
-            return Array([undefined] * arguments[0].number)
+        if len(arguments) == 1:
+            length = arguments[0]
+
+            if isinstance(length, float):
+                if int(length) != length:
+                    raise RangerError('invalid array length')
+                
+                length = int(length)
+
+            if isinstance(length, int):
+                if length < 0:
+                    raise RangeError('invalid array length')
+
+                return [undefined] * length
 
         return arguments
 
-    def __iter__(self):
-        return iter(self.items)
+    @javascript
+    def push(this, arguments):
+        if isinstance(this, list):
+            this.extend(arguments)
 
-    def enumerate(self):
-        for property in self.properties:
-            yield String(property)
+        raise InternalError('Push is not implemented for %r' % this)
+            
+    @javascript
+    def join(this, arguments):
+        return arguments[0].join(this)
 
-    def pop(self, *args):
-        return self.items.pop(*args)
-
-    def __len__(self):
-        return len(self.items)
-    
-    def parseindex(self, item):
-        index = None
-
-        if isinstance(item, int):
-            index = item
-        elif isinstance(item, Number):
-            index = int(item.number)
-        elif isinstance(item, String):
-            try:
-                index = int(item.string, 10)
-            except ValueError:
+    @classmethod
+    def coerceindex(cls, property):
+        if isinstance(property, int):
+            if property < 0:
                 return None
 
-        if str(index) != str(item):
-            return None
-        
+            index = property
+
+        if isinstance(property, float):
+            index = int(property)
+
+            if index != property:
+                return None
+
+        if isinstance(property, basestring):
+            try:
+                index = int(property, 10)
+            except ValueError:
+                return None
+            
         if index < 0:
             return None
 
         return index
 
-    def __getitem__(self, item):
-        index = self.parseindex(item)
+    @classmethod
+    def getproperty(cls, this, property):
+        index = cls.coerceindex(property)
 
         if index is not None:
             try:
-                return self.items[index]
+                return this[index]
             except IndexError:
                 pass
 
-        return Object.__getitem__(self, item)
+        try:
+            return cls.extraproperties[id(this)][unicode(property)]
+        except KeyError:
+            pass
 
-    def __setitem__(self, item, value):
-        index = self.parseindex(item)
+        return getproperty(cls.prototype, property)
+
+    @classmethod
+    def setproperty(cls, this, property, value):
+        index = cls.coerceindex(property)
 
         if index is not None:
-            if self['length'] <= index:
-                self.items.extend([undefined] * (index - self['length'].number + 1))
-                self['length'] = index + 1
+            if len(this) <= index:
+                this.extend([undefined] * (index - len(this) + 1))
                 
-            self.items[index] = value
+            this[index] = value
 
-        return Object.__setitem__(self, item, value)
+        cls.extraproperties.setdefault(id(this), {})[unicode(property)] = value
 
-    def __repr__(self):
-        return repr(self.items)
+        return value
 
 
 class Boolean(Object):
-    def __init__(self, value=False):
-        Object.__init__(self)
-        self.value = bool(value)
-
-    def __not__(self):
-        return Boolean(not self.value)
-
-    def __nonzero__(self):
-        return self.value
-
-    def __eq__(self, other):
-        return self.value == other.value
-
-    def __repr__(self):
-        return repr(self.value)
+    pass
 
 
 class Function(Object):
@@ -407,11 +413,11 @@ class Function(Object):
         self.scope = scope or Scope()
 
         self['length'] = Number(len(parameters))
-        self['prototype'] = Object()
+        self['prototype'] = {}
 
     @javascript
     def apply(this, arguments):
-        if not callable(this):
+        if not hasattr(this, '__call__'):
             raise TypeError('Function.prototype.apply called on incompatible %r' % this)
 
         context = this
@@ -420,18 +426,18 @@ class Function(Object):
             context = arguments[0]
 
         if len(arguments) > 1:
-            if not isinstance(arguments[1], Array):
+            if not isinstance(arguments[1], list):
                 raise TypeError('second argument to Function.prototype.apply must be an array')
 
             arguments = arguments[1]
         else:
-            arguments = Array()
+            arguments = list()
 
         return this(context, arguments)
 
     @javascript
     def call(this, arguments):
-        if not callable(this):
+        if not hasattr(this, '__call__'):
             raise TypeError('Function.prototype.call called on incompatible %r' % this)
 
         if arguments:
@@ -446,10 +452,13 @@ class Function(Object):
 
         scope.var('arguments', arguments)
 
-        arguments['callee'] = self
+        setproperty(arguments, 'callee', self)
 
         for i, p in enumerate(self.parameters):
-            scope.var(p, arguments[i])
+            try:
+                scope.var(p, arguments[i])
+            except IndexError:
+                scope.var(p, undefined)
 
         return self.code(this, scope)
 
@@ -462,7 +471,7 @@ class PythonFunction(Function):
         Object.__init__(self)
 
         if callable:
-            self['prototype'] = getattr(callable, 'prototype', Object())
+            self['prototype'] = getattr(callable, 'prototype', {})
             self.name = callable.__name__
         else:
             self.name = 'function'
@@ -472,32 +481,16 @@ class PythonFunction(Function):
     def __call__(self, this, arguments):
         return self.callable(this, arguments)
 
+    @classmethod
+    def getproperty(cls, this, property):
+        if property in cls.prototype:
+            return cls.prototype[property]
 
-class String(Immutable):
-    def __init__(self, s):
-        Object.__init__(self)
-        self.string = unicode(s)
+        raise InternalError()
 
-    def __hash__(self):
-        return hash(self.string)
 
-    def __eq__(self, other):
-        if isinstance(other, String):
-            return Boolean(self.string == other.string)
-
-        return false
-
-    def __add__(self, other):
-        if not isinstance(other, String):
-            return String(self.string + String(other).string)
-
-        return String(self.string + other.string)
-
-    def __unicode__(self):
-        return self.string
-
-    def __repr__(self):
-        return repr(self.string)
+class String(Object):
+    pass
 
 
 class RegExp(Object):
@@ -509,27 +502,24 @@ class RegExp(Object):
     def new(this, arguments):
         return RegExp(arguments[0], arguments[1])
 
-Object.prototype = Object(Object.properties)
-Object.prototype.prototype = None
-Array.prototype = Object(Array.properties)
-Boolean.prototype = Object(Boolean.properties)
-Number.prototype = Object(Number.properties)
-RegExp.prototype = Object(RegExp.properties)
-String.prototype = Object(String.properties)
+
+Object.prototype = Object.properties
+Array.prototype = Array.properties
+Boolean.prototype = Boolean.properties
+Number.prototype = Number.properties
+RegExp.prototype = RegExp.properties
+String.prototype = String.properties
 Function.prototype = Function()
-Function.prototype.properties.update(Function.properties)
+Function.prototype.update(Function.properties)
 Function.prototype.prototype = None
 
-true = Boolean(True)
-false = Boolean(False)
 NaN = Number(Number.NaN)
 
 def log(this, arguments):
     import logging
     logging.getLogger().debug(arguments)
 
-console = Object({'log': PythonFunction(log)})
-
+console = {'log': PythonFunction(log)}
 
 scope = Scope({
     'Array': PythonFunction(Array),
