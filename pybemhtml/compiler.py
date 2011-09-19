@@ -371,7 +371,7 @@ class Compiler(object):
             label_name = self.compile_statements(statement.statement, label=statement.identifier.name)
             
             stream.writeline('label = %s(this, scope)' % label_name)
-            stream.writeline('if not isinstance(label, Label) or label != %r:' % (statement.identifier.name))
+            stream.writeline('if not (isinstance(label, Label) and label in [%r, '']):' % (statement.identifier.name))
             stream.indent()
             
             if not program:
@@ -428,12 +428,12 @@ class Compiler(object):
                 switch_stream.dedent()
 
             if statement.default:
-                self.compile_statements(default.statements, switch_stream)
+                self.compile_statements(statement.default.statements, switch_stream)
 
             stream.writeline('label = %s(this, scope)' % switch_name)
 
             if not program:
-                stream.writeline('if isinstance(label, Label) and label != "":')
+                stream.writeline('if not(isinstance(label, Label) and label == ""):')
                 stream.indent()
                 stream.writeline('return label')
                 stream.dedent()

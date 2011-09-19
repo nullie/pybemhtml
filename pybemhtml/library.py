@@ -1,8 +1,12 @@
 # Javascript objects
 
+import logging
 import random
 import re
 import simplejson
+
+
+log = logging.getLogger('pybemhtml.library')
 
 
 class ReferenceError(Exception):
@@ -300,6 +304,9 @@ class Object(Base):
     @javascript
     def hasOwnProperty(this, arguments): 
         prop = arguments[0]
+
+        if isinstance(prop, dict):
+            raise InternalError('Wrong argument for hasOwnProperty: %r' % prop)
 
         return prop in this
 
@@ -655,11 +662,11 @@ Function.prototype.prototype = None
 
 NaN = Number(Number.NaN)
 
-def log(this, arguments):
+def console_log(this, arguments):
     import logging
-    logging.getLogger().debug(" ".join(repr(arg) for arg in arguments))
+    log.debug(" ".join(repr(arg) for arg in arguments))
 
-console = {'log': PythonFunction(log)}
+console = {'log': PythonFunction(console_log)}
 
 scope = Scope({
     'Array': PythonFunction(Array),

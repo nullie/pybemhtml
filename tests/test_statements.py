@@ -48,6 +48,33 @@ def test_switch():
     }
 
     assert(i == 2);
+
+    v = 3;
+
+    switch(v) {
+        case 2:
+            break;
+        case 3:
+            i = 15;
+        case 4:
+            i++;
+        default:
+            q = 2;
+    }
+
+    switch(v) {
+        case 1:
+            break;
+        default:
+            q = 5;
+            break;
+        case 2:
+            break;
+    }
+
+    assert(q == 5);
+    assert(i == 16);
+
     """
 
     python = Compiler().compile(source)
