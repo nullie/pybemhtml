@@ -69,8 +69,8 @@ class Compiler(object):
 
         return "\n".join(f.source for f in [preamble] + self.functions)
 
-    def generate_name(self):
-        name = 'f%s' % self.name_counter
+    def generate_name(self, prefix='f'):
+        name = '%s%s' % (prefix, self.name_counter)
         self.name_counter += 1
         return name
 
@@ -386,9 +386,11 @@ class Compiler(object):
             return
 
         if isinstance(statement, ast.Break):
-            assert isinstance(statement.identifier, ast.Identifier)
-            assert statement.identifier.name in self.labels
-            stream.writeline('return Label(%r)' % statement.identifier.name)
+            if isinstance(statement.identifier, ast.Identifier):
+                assert statement.identifier.name in self.labels
+                stream.writeline('return Label(%r)' % statement.identifier.name)
+            else:
+                stream.writeline('return Label()')
             return
 
         # assert, for testing
@@ -399,6 +401,43 @@ class Compiler(object):
 
         if isinstance(statement, ast.Return):
             stream.writeline('return %s' % self.compile_expression(statement.expression))
+            return
+        
+        if isinstance(statement, ast.Switch):
+            switch_name = self.generate_name('switch')
+            switch_stream = self.stream.child()
+            self.functions.append(switch_stream)
+            switch_stream.writeline('def %s(this,scope):' % switch_name)
+            switch_stream.indent()
+
+            expr = self.compile_expression(statement.expression)
+            name = self.generate_name('value')
+            switch_stream.writeline('%s = %s' % (name, expr))
+            true_name = self.generate_name('true')
+            switch_stream.writeline('%s = False' % true_name)
+            
+            for case in statement.cases:
+                switch_stream.writeline('if %s == %s:' % (name, self.compile_expression(case.identifier)))
+                switch_stream.indent()
+                switch_stream.writeline('%s = True' % true_name)
+                switch_stream.dedent()
+                
+                switch_stream.writeline('if %s:' % true_name)
+                switch_stream.indent()
+                self.compile_statements(case.statements, switch_stream)
+                switch_stream.dedent()
+
+            if statement.default:
+                self.compile_statements(default.statements, switch_stream)
+
+            stream.writeline('label = %s(this, scope)' % switch_name)
+
+            if not program:
+                stream.writeline('if isinstance(label, Label) and label != "":')
+                stream.indent()
+                stream.writeline('return label')
+                stream.dedent()
+
             return
 
         stream.writeline(self.compile_expression(statement))
