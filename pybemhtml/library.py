@@ -182,14 +182,14 @@ def typeof(value):
     if isinstance(value, list):
         return 'object'
 
+    if value is undefined:
+        return 'undefined'
+
     if isinstance(value, Function) or hasattr(value, '__call__'):
         return 'function'
 
     if isinstance(value, dict):
         return 'object'
-
-    if value is undefined:
-        return 'undefined'
 
     if value is True or value is False:
         return 'boolean'
@@ -220,7 +220,6 @@ class UndefinedType(Base):
         return 'undefined'
 
     def __call__(self, this, arguments):
-        raise TypeError('call to undefined with arguments %r %r' % (this, arguments))
         raise TypeError('undefined is not a function')
 
     def __add__(self, other):
