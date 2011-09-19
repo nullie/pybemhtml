@@ -1,23 +1,21 @@
 import codecs
 import os.path
+import sys
 
 from pybemhtml.compiler import Compiler
 
 def test_library():
     basedir = os.path.dirname(__file__)
 
-    source = codecs.open(os.path.join(basedir, 'data', 'test_library.js'), encoding='utf-8').read()    
+    source = codecs.open(os.path.join(basedir, 'data', 'library.js'), encoding='utf-8').read()    
 
     python = Compiler().compile(source)
 
-    codecs.open(os.path.join(basedir, 'tmp', 'test_library_js.py'), 'w', encoding='utf-8').write(python)
+    codecs.open(os.path.join(basedir, 'tmp', 'library_js.py'), 'w', encoding='utf-8').write(python)
 
-    from tmp.test_library_js import scope
+    sys.path.append(os.path.join(basedir, 'tmp'))
+
+    from library_js import scope
     from pybemhtml.library import undefined, PythonFunction
-
-    def _assert(this, arguments):
-        assert(arguments[0])
-
-    scope['assert'] = PythonFunction(_assert)
 
     scope['tests'](undefined, [])

@@ -635,6 +635,10 @@ class JSON(Object):
         return simplejson.dumps(arguments[0])
 
 
+class Label(unicode):
+    pass
+
+
 Object.prototype = Object.properties
 Array.prototype = Array.properties
 Boolean.prototype = Boolean.properties
@@ -665,3 +669,5 @@ scope = Scope({
     'JSON': JSON.properties,
     'console': console,
 })
+
+this = undefined

@@ -1,8 +1,12 @@
+import logging
 import re
 import sys
 
 from pyjsparser import ast
 from pyjsparser.parser import Parser
+
+
+log = logging.getLogger('bemhtml.compiler')
 
 
 class CompilerError(Exception):
@@ -32,7 +36,7 @@ class Stream(object):
         self.source += source
 
     def writeline(self, line):
-        self.source += " " * self._indent + line + '\n'
+        self.source += "    " * self._indent + line + '\n'
 
 
 class Compiler(object):
@@ -42,6 +46,8 @@ class Compiler(object):
     def compile(self, js):
         self.functions = []
         self.name_counter = 0
+        self.label = None
+        self.labels = set()
 
         program = Parser().parse(js)
 
@@ -54,14 +60,14 @@ class Compiler(object):
 
         self.stream = Stream()
 
-        self.compile_statements(program.statements, self.stream, in_function=False)
+        self.compile_statements(program.statements, self.stream, program=True)
 
         for f in self.functions:
             f.writeline('return undefined')
 
         self.functions.append(self.stream)
 
-        return "".join(f.source for f in [preamble] + self.functions)
+        return "\n".join(f.source for f in [preamble] + self.functions)
 
     def generate_name(self):
         name = 'f%s' % self.name_counter
@@ -288,7 +294,7 @@ class Compiler(object):
 
         return repr(self.UNESCAPE.sub(replacement, string.data[1:-1]))
 
-    def compile_statements(self, statements, stream=None, in_function=True):
+    def compile_statements(self, statements, stream=None, program=False, label=None):
         if not stream:
             name = self.generate_name()
             stream = self.stream.child()
@@ -304,11 +310,17 @@ class Compiler(object):
         assert isinstance(statements, list)
 
         for statement in statements:
-            self.compile_statement(statement, stream)
+            self.compile_statement(statement, stream, program)
+
+        if name:
+            if label:
+                stream.writeline('return Label(%r)' % label)
+            else:
+                stream.writeline('return undefined')
 
         return name
 
-    def compile_statement(self, statement, stream):
+    def compile_statement(self, statement, stream=None, program=False):
         if statement is None:
             return
 
@@ -349,8 +361,46 @@ class Compiler(object):
                 stream.writeline(self.compile_assignment(statement.node, self.compile_function(statement)))
                 return
 
+        if isinstance(statement, ast.LabelledStatement):
+            assert isinstance(statement.identifier, ast.Identifier)
+            
+            assert statement.identifier.name not in self.labels
+
+            self.labels.add(statement.identifier.name)
+
+            label_name = self.compile_statements(statement.statement, label=statement.identifier.name)
+            
+            stream.writeline('label = %s(this, scope)' % label_name)
+            stream.writeline('if not isinstance(label, Label) or label != %r:' % (statement.identifier.name))
+            stream.indent()
+            
+            if not program:
+                stream.writeline('return label')
+            else:
+                stream.writeline('assert False')
+            
+            stream.dedent()
+
+            self.labels.remove(statement.identifier.name)
+            
+            return
+
+        if isinstance(statement, ast.Break):
+            assert isinstance(statement.identifier, ast.Identifier)
+            assert statement.identifier.name in self.labels
+            stream.writeline('return Label(%r)' % statement.identifier.name)
+            return
+
+        # assert, for testing
+        if isinstance(statement, ast.FuncCall):
+            if isinstance(statement.node, ast.Identifier) and statement.node.name == 'assert':
+                stream.writeline('assert %s' % self.compile_expression(statement.arguments))
+                return
+
         if isinstance(statement, ast.Return):
             stream.writeline('return %s' % self.compile_expression(statement.expression))
             return
 
         stream.writeline(self.compile_expression(statement))
+
+        return
