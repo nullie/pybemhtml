@@ -17,6 +17,10 @@ class RangeError(Exception):
     pass
 
 
+class JavascriptException(Exception):
+    pass
+
+
 class Scope(object):
     def __init__(self, parent=None):
         self.variables = {}

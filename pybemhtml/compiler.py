@@ -440,6 +440,10 @@ class Compiler(object):
 
             return
 
+        if isinstance(statement, ast.Throw):
+            stream.writeline('raise JavascriptException(%s)' % self.compile_expression(statement.expression))
+            return
+
         stream.writeline(self.compile_expression(statement))
 
         return
