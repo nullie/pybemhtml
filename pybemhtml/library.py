@@ -383,6 +383,11 @@ class Array(Object):
     def __new__(cls, *args, **kwargs):
         raise InternalError("Array object should not be instantiated")
 
+    @javascript
+    def forEach(this, arguments):
+        for item in this:
+            arguments[0](undefined, [item])
+
     @staticmethod
     def new(this, arguments):
         if len(arguments) == 1:
