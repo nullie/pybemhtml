@@ -210,15 +210,15 @@ class Compiler(object):
                 assert isinstance(assignment, ast.Assign) and assignment.operator == ':'
 
                 if isinstance(assignment.node, ast.Identifier):
-                    key = unicode(assignment.node.name)
+                    key = repr(assignment.node.name)
                 elif isinstance(assignment.node, ast.String):
-                    key = unicode(assignment.node.data[1:-1])
+                    key = self.compile_string(assignment.node)
                 elif isinstance(assignment.node, ast.Number):
-                    key = unicode(assignment.node.value)
+                    key = repr(assignment.node.value)
                 else:
                     assert False
                 
-                properties.append("%r:%s" % (key, self.compile_expression(assignment.expr)))
+                properties.append("%s:%s" % (key, self.compile_expression(assignment.expr)))
                 
             return "{%s}" % ",".join(properties)
 

@@ -647,7 +647,7 @@ class Math(Object):
 class JSON(Object):
     @javascript
     def stringify(this, arguments):
-        return simplejson.dumps(arguments[0])
+        return simplejson.dumps(arguments[0], separators=(',',':'))
 
 
 class Label(unicode):
